@@ -12,7 +12,19 @@ Module-by-module phased rebuild of 3W. Each phase should be reviewed before movi
   - [ ] `xd_zte` and `coverage_holes` validated only against synthetic fixtures — no matching real sample data exists in `dataset_example/` (files assumed to be xD weekly KPI exports turned out to be site config exports; no MR/Ookla coverage data was provided)
   - [ ] Alembic-managed Postgres schema (replacing `app_database_setup.py`) — moved to Phase 2 since it's transactional, not analytics
   - [ ] Not yet built: a real orchestrator/scheduled job that runs this automatically (each stage was run manually, one at a time, for this validation)
-- [ ] **Phase 2 — Core domain services:** Auth/IAM, Annotations, Chat, CAPEX pricing, Reviews
+- [ ] **Phase 2 — Core domain services**
+  - [ ] Alembic-managed Postgres schema (users, annotations/tasks, chat, reviews, capex_pricing) — replaces `app_database_setup.py`
+  - [ ] Auth/IAM: registration, login, JWT (access + refresh), bcrypt, RBAC (Admin/Planner/Staff), login history
+  - [ ] Annotations/Tasks (map annotations double as a lightweight PM tool):
+    - [ ] Unassigned annotation = plain note; assigning it to someone converts it into a task
+    - [ ] Task fields: assignee, due date, status (todo/in_progress/pending_review/done/rejected)
+    - [ ] Gantt chart: simple per-assignee timeline bar from creation date to due date (no dependency graph) — backend endpoint returns the data, chart rendering is Phase 5
+    - [ ] Per-assignment chat room (1 chat thread per task, reuses the Chat module below)
+    - [ ] Review workflow: assignee marks "ready for review" → status `pending_review`; assigner approves (→ `done`) or rejects (→ back to `in_progress` with a reason); task is not "done" until the assigner approves
+  - [ ] Chat: DMs, group conversations, read receipts, annotation/task linking (ports messaging from the legacy app)
+  - [ ] CAPEX pricing admin: CRUD over the EQ/ES pricing table that `capex_solver.py` already consumes
+  - [ ] Reviews/feedback module (ports reviews/comments/reactions from the legacy app — distinct from task review above)
+  - [ ] Split-screen current-vs-forecast API: two read endpoints over data Phase 1 already produces — current status from `congestion_analysis`, forecast status from `forecast_results` filtered by year + quarter-week (13/26/39/52), matching the legacy `/api/forecast_data` contract. Map UI itself (synced Leaflet/MapLibre panes) is Phase 5.
 - [ ] **Phase 3 — Spatial & planning pipelines:** CCTV site planning, Genset/substation routing
 - [ ] **Phase 4 — AI agent & RAG:** LangGraph agent tools against DuckDB, PDF ingestion pipeline with background worker
 - [ ] **Phase 5 — Frontend rebuild:** React + Vite + MapLibre GL, Metabase embedding
