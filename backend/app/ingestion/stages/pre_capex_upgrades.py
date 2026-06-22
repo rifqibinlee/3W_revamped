@@ -40,6 +40,18 @@ def _detect_column(columns: list[str], must_contain_all: tuple[str, ...]) -> str
     return None
 
 
+def _parse_year_week(filename: str) -> tuple[int, int]:
+    """year/week aren't in the legacy script's output at all (it relies on
+    S3 partition paths instead) — added here as real columns since
+    capex_upgrades needs to join pre_capex_upgrades against
+    congestion_analysis by (zoom_sector_id, year, week)."""
+    year_match = re.search(r"(?:year|y)[-_=\s]*(\d{4})", filename, re.IGNORECASE) or re.search(r"(202\d)", filename)
+    week_match = re.search(r"(?:week|wk|w)[-_=\s]*(\d{1,2})", filename, re.IGNORECASE)
+    year = int(year_match.group(1)) if year_match else 2025
+    week = int(week_match.group(1)) if week_match else 1
+    return year, week
+
+
 def run(raw_file_path: str, cell_reference_path: str, congestion_path: str, dataset_type: str) -> Path | None:
     if dataset_type not in ("xC", "xD"):
         raise ValueError(f"dataset_type must be 'xC' or 'xD', got {dataset_type!r}")
@@ -52,6 +64,7 @@ def run(raw_file_path: str, cell_reference_path: str, congestion_path: str, data
 
 
 def _run(con, raw_file_path: str, cell_reference_path: str, congestion_path: str, dataset_type: str) -> Path | None:
+    file_year, file_week = _parse_year_week(raw_file_path)
     reader = "read_csv" if raw_file_path.lower().endswith(".csv") else "read_parquet"
     con.execute(f"CREATE OR REPLACE TEMP VIEW raw AS SELECT * FROM {reader}('{raw_file_path}')")
     raw_columns = [r[0] for r in con.execute("DESCRIBE raw").fetchall()]
@@ -140,6 +153,8 @@ def _run(con, raw_file_path: str, cell_reference_path: str, congestion_path: str
             SELECT
                 ss.zoom_sector_id,
                 '{dataset_type}' AS dataset_type,
+                {file_year} AS year,
+                {file_week} AS week,
                 COALESCE(ep.sum_existing_prb, 0.0) AS sum_existing_prb,
                 ss.sum_rb_used,
                 (ss.sum_rb_used / CASE
