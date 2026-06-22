@@ -72,3 +72,114 @@ def test_forecast_status_filters_by_year_and_week(tmp_path, monkeypatch) -> None
 
     rows_w26 = service.forecast_status(2026, 26)
     assert rows_w26[0]["congested"] is False
+
+
+CONGESTION_COLUMNS = (
+    "site_id", "zoom_sector_id", "region", "cluster", "operator", "congested",
+    "eric_data_volume_ul_dl", "week", "year",
+)
+
+
+def _write_congestion_fixture(tmp_path, rows):
+    _write_parquet(tmp_path / "congestion_analysis.parquet", rows, CONGESTION_COLUMNS)
+
+
+def test_sector_metrics_returns_all_rows_unfiltered(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_congestion_fixture(tmp_path, [
+        ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 10.0, 10, 2026),
+        ("SITE002", "SITE002_Macro_1", "Southern", "C2", "Digi", False, 20.0, 10, 2026),
+    ])
+    rows = service.sector_metrics(service.Filters())
+    assert len(rows) == 2
+
+
+def test_sector_metrics_filters_by_region(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_congestion_fixture(tmp_path, [
+        ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 10.0, 10, 2026),
+        ("SITE002", "SITE002_Macro_1", "Southern", "C2", "Digi", False, 20.0, 10, 2026),
+    ])
+    rows = service.sector_metrics(service.Filters(region="Central"))
+    assert len(rows) == 1
+    assert rows[0]["region"] == "Central"
+
+
+def test_sector_metrics_filter_rejects_sql_injection_attempt(tmp_path, monkeypatch) -> None:
+    """region is bound as a parameter, not interpolated — a value designed
+    to break out of a string literal should just match nothing, not error
+    or alter the query."""
+    _setup(tmp_path, monkeypatch)
+    _write_congestion_fixture(tmp_path, [
+        ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 10.0, 10, 2026),
+    ])
+    rows = service.sector_metrics(service.Filters(region="x' OR '1'='1"))
+    assert rows == []
+
+
+def test_congested_sectors_only_includes_congested(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_congestion_fixture(tmp_path, [
+        ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 10.0, 10, 2026),
+        ("SITE002", "SITE002_Macro_1", "Central", "C1", "Celcom", False, 20.0, 10, 2026),
+    ])
+    rows = service.congested_sectors(service.Filters())
+    assert len(rows) == 1
+    assert rows[0]["zoom_sector_id"] == "SITE001_Macro_1"
+
+
+def test_congested_sectors_combines_with_other_filters(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_congestion_fixture(tmp_path, [
+        ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 10.0, 10, 2026),
+        ("SITE002", "SITE002_Macro_1", "Southern", "C2", "Celcom", True, 20.0, 10, 2026),
+    ])
+    rows = service.congested_sectors(service.Filters(region="Southern"))
+    assert len(rows) == 1
+    assert rows[0]["zoom_sector_id"] == "SITE002_Macro_1"
+
+
+def test_forecast_table_filters_by_year(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_parquet(
+        tmp_path / "forecast_results.parquet",
+        [
+            ("SITE001_Macro_1", "Central", 1, 2026),
+            ("SITE001_Macro_1", "Central", 1, 2027),
+        ],
+        ("zoom_sector_id", "region", "week", "year"),
+    )
+    rows = service.forecast_table(service.Filters(year=2026))
+    assert len(rows) == 1
+    assert rows[0]["year"] == 2026
+
+
+def test_summary_stats(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_congestion_fixture(tmp_path, [
+        ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 10.0, 10, 2026),
+        ("SITE002", "SITE002_Macro_1", "Central", "C1", "Celcom", False, 30.0, 10, 2026),
+    ])
+    stats = service.summary_stats(service.Filters())
+    assert stats["total_sectors"] == 2
+    assert stats["congested_count"] == 1
+    assert stats["avg_volume_gb"] == 20.0
+
+
+def test_summary_stats_empty_when_no_data(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    stats = service.summary_stats(service.Filters())
+    assert stats == {"total_sectors": 0, "congested_count": 0, "avg_volume_gb": 0.0}
+
+
+def test_filter_options_lists_distinct_values(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_congestion_fixture(tmp_path, [
+        ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 10.0, 10, 2026),
+        ("SITE002", "SITE002_Macro_1", "Southern", "C2", "Digi", False, 20.0, 11, 2026),
+    ])
+    options = service.filter_options()
+    assert options["regions"] == ["Central", "Southern"]
+    assert options["operators"] == ["Celcom", "Digi"]
+    assert options["weeks"] == [10, 11]
+    assert options["years"] == [2026]
