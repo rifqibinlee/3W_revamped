@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from app.analytics.router import router as analytics_router
 from app.annotations.router import router as annotations_router
 from app.auth.router import router as auth_router
 from app.chat.router import router as chat_router
@@ -12,6 +13,7 @@ app.include_router(annotations_router)
 app.include_router(chat_router)
 app.include_router(pricing_router)
 app.include_router(reviews_router)
+app.include_router(analytics_router)
 
 
 @app.get("/health")
