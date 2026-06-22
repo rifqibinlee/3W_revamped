@@ -30,7 +30,7 @@ STAGES: tuple[Stage, ...] = (
     # Pre-Capacity-CAPEX-Upgrades.py, and Capacity-CAPEX-Upgrades.py, each
     # re-reading the same raw "reference xC & xD cell_Dec25.xlsb" from scratch.
     # Pulled out here so it's parsed once and shared.
-    Stage("cell_reference", "(extracted from 4 legacy scripts — see comment)"),
+    Stage("cell_reference", "(extracted from 4 legacy scripts — see comment)", implemented=True),
     Stage("xc_huawei", "xC Huawei Dataset.py", depends_on=("site_coordinates", "cell_reference")),
     Stage("xd_zte", "xD (ZTE Dataset).py", depends_on=("site_coordinates", "cell_reference")),
     Stage("congestion_analysis", "Capacity-Congestion-Analysis.py", depends_on=("xc_huawei", "xd_zte")),
