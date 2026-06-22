@@ -33,6 +33,19 @@ Constraints for the rebuild:
 - DuckDB's single-process model means the analytics layer cannot be horizontally scaled independently of the backend process — acceptable at current data volumes; revisit (e.g. move to ClickHouse or Athena-on-Parquet) only if query volume or data size grows significantly beyond what fits in the 40GB instance.
 - Dropping Cesium removes any 3D-specific features that depended on it; MapLibre's terrain support is the replacement and needs verification against actual use cases during the frontend rebuild phase.
 
+## Addendum — 2026-06-22: ETL pipeline scope correction
+
+Reviewing the original 10 ETL scripts (`scripts/`) and sample raw data (`dataset_example/`) revealed the ingestion layer is substantially heavier than initially scoped:
+
+- Raw inputs are weekly XLSB/XLSX/CSV exports from two vendor datasets (Huawei "xC", ZTE "xD"), 95-167MB per file, forming a DAG: `{xC, xD} raw → sector calculations → congestion analysis → {CD combined result, pre-CAPEX → CAPEX upgrades, forecast results}`, plus an independent coverage-holes DBSCAN branch fed by MR/Ookla signal data.
+- The original scripts do correctness-heavy work in Python loops (per-sector 12-case CAPEX upgrade solver, per-sector linear regression for forecasting, chunked pandas aggregation) — this, not just "Athena on CSV," is a second source of slowness.
+- Raw sample files exceed GitHub's 100MB push limit and must never be committed; `dataset_example/` is git-ignored. Only Parquet outputs and code are version-controlled.
+
+Decisions arising from this:
+- Rewrite vectorizable steps (congestion filtering, sector aggregation, forecast regression via window functions) as **DuckDB SQL** rather than pandas loops — this is the real performance lever, independent of swapping Athena for DuckDB.
+- Treat raw vendor files as **ephemeral**: stream from MinIO/S3, transform, write Parquet, delete local temp copies. The 40GB EC2 disk budget cannot hold raw + intermediate + Parquet simultaneously at current file sizes.
+- Model the ETL as an explicit ordered DAG (not a flat script folder) so dependencies (e.g. CAPEX-Upgrades requires Pre-CAPEX-Upgrades requires Congestion-Analysis requires {xC, xD} sector calculations) are enforced, not implicit in run order.
+
 ## Rollout
 
 See [docs/REBUILD_PLAN.md](../REBUILD_PLAN.md) for the phased plan (Phase 0 foundations → Phase 6 AWS readiness).

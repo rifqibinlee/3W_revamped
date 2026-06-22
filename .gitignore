@@ -21,7 +21,11 @@ dist/
 # Data
 *.parquet
 *.csv
+*.xlsb
+*.xlsx
 data/
+dataset_example/
+scripts/raw_output/
 
 # IDE / OS
 .vscode/
