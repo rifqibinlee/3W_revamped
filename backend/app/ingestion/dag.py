@@ -25,12 +25,18 @@ class Stage:
 STAGES: tuple[Stage, ...] = (
     Stage("site_coordinates", "Capacity-Site-Coordinate-Process.py", implemented=True),
     Stage("site_coverage_params", "Capacity-Site-Coverage-Parameters.py", depends_on=("site_coordinates",)),
-    Stage("xc_huawei", "xC Huawei Dataset.py", depends_on=("site_coordinates",)),
-    Stage("xd_zte", "xD (ZTE Dataset).py", depends_on=("site_coordinates",)),
+    # cell_reference has no single legacy script — it was inlined and re-parsed
+    # independently inside xC Huawei Dataset.py, xD (ZTE Dataset).py,
+    # Pre-Capacity-CAPEX-Upgrades.py, and Capacity-CAPEX-Upgrades.py, each
+    # re-reading the same raw "reference xC & xD cell_Dec25.xlsb" from scratch.
+    # Pulled out here so it's parsed once and shared.
+    Stage("cell_reference", "(extracted from 4 legacy scripts — see comment)"),
+    Stage("xc_huawei", "xC Huawei Dataset.py", depends_on=("site_coordinates", "cell_reference")),
+    Stage("xd_zte", "xD (ZTE Dataset).py", depends_on=("site_coordinates", "cell_reference")),
     Stage("congestion_analysis", "Capacity-Congestion-Analysis.py", depends_on=("xc_huawei", "xd_zte")),
     Stage("cd_combined_result", "Capacity-CD-Combined-Result.py", depends_on=("congestion_analysis",)),
-    Stage("pre_capex_upgrades", "Pre-Capacity-CAPEX-Upgrades.py", depends_on=("congestion_analysis",)),
-    Stage("capex_upgrades", "Capacity-CAPEX-Upgrades.py", depends_on=("pre_capex_upgrades",)),
+    Stage("pre_capex_upgrades", "Pre-Capacity-CAPEX-Upgrades.py", depends_on=("congestion_analysis", "cell_reference")),
+    Stage("capex_upgrades", "Capacity-CAPEX-Upgrades.py", depends_on=("pre_capex_upgrades", "cell_reference")),
     Stage("forecast_results", "Capacity-Forecast-Results.py", depends_on=("xc_huawei", "xd_zte")),
     Stage("coverage_holes", "Capacity-Coverage-Holes-Cluster-(DBSCAN).py"),
 )

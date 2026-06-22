@@ -41,6 +41,8 @@ Reviewing the original 10 ETL scripts (`scripts/`) and sample raw data (`dataset
 - The original scripts do correctness-heavy work in Python loops (per-sector 12-case CAPEX upgrade solver, per-sector linear regression for forecasting, chunked pandas aggregation) — this, not just "Athena on CSV," is a second source of slowness.
 - Raw sample files exceed GitHub's 100MB push limit and must never be committed; `dataset_example/` is git-ignored. Only Parquet outputs and code are version-controlled.
 
+A second review (after the `scripts/` legacy folder was added, since renamed `scripts_example/`) found one more gap: `reference xC & xD cell_Dec25.xlsb` — the master cell-hardware reference (XTXR/MIMO config, bandwidth → avail_prb) — was re-parsed independently by **four** legacy scripts (`xC Huawei Dataset.py`, `xD (ZTE Dataset).py`, `Pre-Capacity-CAPEX-Upgrades.py`, `Capacity-CAPEX-Upgrades.py`), each reading the same raw file from `s3://.../site_coverage_params/referenceData/` from scratch. The new DAG pulls this out into its own `cell_reference` stage, parsed once, with those four stages depending on it instead.
+
 Decisions arising from this:
 - Rewrite vectorizable steps (congestion filtering, sector aggregation, forecast regression via window functions) as **DuckDB SQL** rather than pandas loops — this is the real performance lever, independent of swapping Athena for DuckDB.
 - Treat raw vendor files as **ephemeral**: stream from MinIO/S3, transform, write Parquet, delete local temp copies. The 40GB EC2 disk budget cannot hold raw + intermediate + Parquet simultaneously at current file sizes.
