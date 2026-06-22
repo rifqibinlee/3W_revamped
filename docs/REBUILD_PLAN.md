@@ -36,7 +36,14 @@ Module-by-module phased rebuild of 3W. Each phase should be reviewed before movi
   - [x] RAG (`app/rag/`): PDF chunk/embed/store (ports `s3_ingest.py` minus the S3-specific download), cosine-similarity search computed in Python rather than pgvector's native operator (simpler, equally testable at this corpus scale) — `POST /rag/ingest` (FastAPI `BackgroundTasks`, not a separate task queue), `POST /rag/search`
   - [x] Migration `0005`: pgvector extension + `knowledge_chunks` table, verified by generating real DDL in offline mode
   - [x] 15 new tests, 121/121 total passing, ruff clean
-- [ ] **Phase 5 — Frontend rebuild:** React + Vite + MapLibre GL, Metabase embedding
+- [ ] **Phase 5 — Frontend rebuild:** React + Vite + Tailwind v4 + MapLibre GL, Metabase embedding
+  - [x] Design system locked in: glassmorphic panels on a deep indigo-blue background, live canvas particle stream (blue/yellow, ~2200 particles, glow), Space Grotesk + Plus Jakarta Sans (deliberately not the default Inter/Roboto look)
+  - [x] Foundation: Vite scaffold, Tailwind v4 theme tokens, `ParticleBackground`, `GlassPanel`, `AppShell` (nav), API client + auth context wired to the real backend
+  - [x] Login page — wired to `POST /auth/login`
+  - [x] Dashboard page — wired to `GET /analytics/current-status` + `GET /annotations/gantt/rows` (real data, not mock)
+  - [ ] Remaining pages: Map (MapLibre + split-screen current/forecast), Tasks/Gantt board, Chat, Pricing admin, Reviews, Agent chat, RAG search
+  - [ ] Metabase embedding
+  - [x] 1 component test, lint clean, typecheck clean, production build verified
 - [ ] **Phase 6 — AWS readiness:** Terraform (S3, RDS, ECS/Fargate or App Runner), secrets migration, CI/CD deploy pipeline
 
 See [docs/adr/0001-architecture.md](adr/0001-architecture.md) for the architecture rationale behind these choices.
