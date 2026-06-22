@@ -20,6 +20,10 @@ dependencies = [
     "scikit-learn>=1.5",
     "pandas>=2.2",
     "email-validator>=2.2",
+    "geopandas>=1.0",
+    "scipy>=1.13",
+    "osmnx>=1.9",
+    "networkx>=3.3",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +34,9 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
 ]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
 
 [tool.ruff]
 line-length = 100
