@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     duckdb_path: str = "./data/analytics.duckdb"
     parquet_dir: str = "./data/parquet"
 
+    # Vite picks a free port if its default is taken, so this covers the
+    # common local-dev range rather than hardcoding one port.
+    cors_origins: list[str] = [f"http://localhost:{p}" for p in range(5173, 5191)]
+
     # Claude is primary; Ollama is the local-dev fallback (no API key
     # needed, no cost) used automatically when anthropic_api_key is unset.
     anthropic_api_key: str | None = None
