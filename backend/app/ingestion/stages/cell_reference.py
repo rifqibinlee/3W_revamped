@@ -1,5 +1,5 @@
 """Master cell-hardware reference: XTXR/MIMO config, band, layer (F1/F2/F3),
-available PRB per cell.
+available PRB, area_target/bau_nic classification per cell.
 
 Extracted from 4 legacy scripts (xC Huawei Dataset.py, xD (ZTE Dataset).py,
 Pre-Capacity-CAPEX-Upgrades.py, Capacity-CAPEX-Upgrades.py) which each
@@ -26,6 +26,7 @@ import pandas as pd
 
 from app.analytics.db import get_connection
 from app.core.config import settings
+from app.ingestion import sql_macros
 
 OUTPUT_TABLE = "cell_reference"
 
@@ -34,6 +35,8 @@ BAND_EXCLUDE = ("width", "mhz")
 BAND_KEYWORDS = ("band", "layer")
 XTXR_KEYWORDS = ("txrx", "xtxr", "mimo", "antenna")
 BW_KEYWORDS = ("bw", "width", "mhz")
+AREA_TARGET_KEYWORDS = ("urban", "kmc", "target", "outside")
+BAU_NIC_KEYWORDS = ("bau", "nic")
 
 REF_SHEET_MARKERS = ("xc ref", "xd ref")
 
@@ -74,17 +77,23 @@ def _select_clause(columns: list[str]) -> str | None:
     band_col = _detect_column(columns, BAND_KEYWORDS, exclude=BAND_EXCLUDE)
     xtxr_col = _detect_column(columns, XTXR_KEYWORDS)
     bw_col = _detect_column(columns, BW_KEYWORDS)
+    area_target_col = _detect_column(columns, AREA_TARGET_KEYWORDS)
+    bau_nic_col = _detect_column(columns, BAU_NIC_KEYWORDS)
 
     band_expr = f'normalize_band_key(CAST("{band_col}" AS VARCHAR))' if band_col else "CAST(NULL AS VARCHAR)"
     xtxr_expr = f'CAST("{xtxr_col}" AS VARCHAR)' if xtxr_col else "'2T2R'"
     bw_expr = f'TRY_CAST("{bw_col}" AS DOUBLE)' if bw_col else "0.0"
+    area_target_expr = f'CAST("{area_target_col}" AS VARCHAR)' if area_target_col else "CAST(NULL AS VARCHAR)"
+    bau_nic_expr = f'CAST("{bau_nic_col}" AS VARCHAR)' if bau_nic_col else "CAST(NULL AS VARCHAR)"
 
     return f"""
         SELECT
             trim(CAST("{cell_col}" AS VARCHAR)) AS cell_name,
             {band_expr} AS band_raw,
             COALESCE({xtxr_expr}, '2T2R') AS xtxr,
-            COALESCE({bw_expr}, 0.0) * 5.0 AS avail_prb
+            COALESCE({bw_expr}, 0.0) * 5.0 AS avail_prb,
+            nullif(trim({area_target_expr}), '') AS area_target,
+            nullif(trim({bau_nic_expr}), '') AS bau_nic
         FROM read_file
     """
 
@@ -115,20 +124,6 @@ CREATE OR REPLACE MACRO band_from_cell_name(cell_str) AS (
 );
 """
 
-_CLASSIFY_F1F2F3_MACRO = r"""
-CREATE OR REPLACE MACRO classify_f1f2f3(cell_str) AS (
-    CASE
-        WHEN regexp_matches(cell_str, '^\d{2,3}$') THEN 'F1'
-        WHEN regexp_matches(cell_str, '(_\d{2}_\d$)|(-XL\d+$)') THEN 'F3'
-        WHEN regexp_matches(cell_str, 'CMM|BLC|DLC|MLC|PLC|CL|RAMO|[A-Z]{2}\d{5}_\d+_\d+') THEN 'F2'
-        WHEN regexp_matches(cell_str, 'DMM|DLD|DL|LD|BL|UL|BLD')
-            OR (cell_str ILIKE '%ML%' AND NOT cell_str ILIKE '%MLC%') THEN 'F1'
-        ELSE 'F1'
-    END
-);
-"""
-
-
 def run(raw_file_paths: list[str]) -> Path:
     con = get_connection()
     temp_parquets: list[str] = []
@@ -143,7 +138,7 @@ def run(raw_file_paths: list[str]) -> Path:
 def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> Path:
     con.execute(_NORMALIZE_BAND_MACRO)
     con.execute(_EXTRACT_BAND_FROM_CELL_MACRO)
-    con.execute(_CLASSIFY_F1F2F3_MACRO)
+    sql_macros.register(con)
 
     selects: list[str] = []
     i = 0
@@ -176,6 +171,8 @@ def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> Path:
                 band_raw,
                 xtxr,
                 avail_prb,
+                area_target,
+                bau_nic,
                 CASE
                     WHEN cell_name LIKE '%\\_%' ESCAPE '\\' THEN split_part(cell_name, '_', 1)
                     WHEN cell_name LIKE '%-%' THEN split_part(cell_name, '-', 1)
@@ -200,7 +197,9 @@ def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> Path:
             classify_f1f2f3(cell_upper) AS f1f2f3,
             COALESCE(band_raw, band_from_cell_name(cell_upper)) AS band,
             xtxr,
-            avail_prb
+            avail_prb,
+            area_target,
+            bau_nic
         FROM base
     """)
 
@@ -210,6 +209,7 @@ def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> Path:
         COPY (
             SELECT
                 cell_name,
+                upper(regexp_replace(cell_name, '[^A-Za-z0-9]', '', 'g')) AS join_key,
                 upper(site_id) || '_' || ibc_macro || '_' || sector_suffix AS zoom_sector_id,
                 site_id,
                 sector_suffix,
@@ -217,7 +217,9 @@ def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> Path:
                 f1f2f3,
                 band,
                 xtxr,
-                avail_prb
+                avail_prb,
+                area_target,
+                bau_nic
             FROM parsed
         ) TO '{output_path}' (FORMAT PARQUET, COMPRESSION SNAPPY)
     """)

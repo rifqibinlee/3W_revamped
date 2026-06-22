@@ -70,3 +70,20 @@ def test_band_falls_back_to_cell_name_when_no_band_column(tmp_path, monkeypatch)
         ["SITE004_DL1800_1,4T4R,20"],
     )
     assert result["SITE004_DL1800_1"]["band"] == "L18"
+
+
+def test_area_target_bau_nic_and_join_key(tmp_path, monkeypatch) -> None:
+    result = _run_csv(
+        tmp_path,
+        monkeypatch,
+        "cell_name,band,xtxr,bw,urban_target,bau_nic_flag",
+        ["SITE-005_DLD_1,L18,4T4R,20,Urban,NIC", "SITE006_DLD_1,L18,4T4R,20,,"],
+    )
+    row = result["SITE-005_DLD_1"]
+    assert row["area_target"] == "Urban"
+    assert row["bau_nic"] == "NIC"
+    assert row["join_key"] == "SITE005DLD1"
+
+    row_empty = result["SITE006_DLD_1"]
+    assert row_empty["area_target"] is None
+    assert row_empty["bau_nic"] is None
