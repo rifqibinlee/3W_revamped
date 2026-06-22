@@ -13,15 +13,15 @@ Module-by-module phased rebuild of 3W. Each phase should be reviewed before movi
   - [ ] Alembic-managed Postgres schema (replacing `app_database_setup.py`) — moved to Phase 2 since it's transactional, not analytics
   - [ ] Not yet built: a real orchestrator/scheduled job that runs this automatically (each stage was run manually, one at a time, for this validation)
 - [ ] **Phase 2 — Core domain services**
-  - [ ] Alembic-managed Postgres schema (users, annotations/tasks, chat, reviews, capex_pricing) — replaces `app_database_setup.py`
-  - [ ] Auth/IAM: registration, login, JWT (access + refresh), bcrypt, RBAC (Admin/Planner/Staff), login history
-  - [ ] Annotations/Tasks (map annotations double as a lightweight PM tool):
-    - [ ] Unassigned annotation = plain note; assigning it to someone converts it into a task
-    - [ ] Task fields: assignee, due date, status (todo/in_progress/pending_review/done/rejected)
-    - [ ] Gantt chart: simple per-assignee timeline bar from creation date to due date (no dependency graph) — backend endpoint returns the data, chart rendering is Phase 5
-    - [ ] Per-assignment chat room (1 chat thread per task, reuses the Chat module below)
-    - [ ] Review workflow: assignee marks "ready for review" → status `pending_review`; assigner approves (→ `done`) or rejects (→ back to `in_progress` with a reason); task is not "done" until the assigner approves
-  - [ ] Chat: DMs, group conversations, read receipts, annotation/task linking (ports messaging from the legacy app)
+  - [x] Alembic-managed Postgres schema — `0001` (users, login_history), `0002` (annotations, annotation_comments), both verified by generating real DDL in offline mode
+  - [x] Auth/IAM: registration, login, JWT (access + refresh), bcrypt, RBAC (Admin/Planner/Staff), login history — `app/auth/`
+  - [x] Annotations/Tasks (map annotations double as a lightweight PM tool) — `app/annotations/`:
+    - [x] Unassigned annotation = plain note; assigning it to someone converts it into a task
+    - [x] Task fields: assignee, due date, status (todo/in_progress/pending_review/done/rejected)
+    - [x] Gantt endpoint: simple per-assignee timeline (created_at -> due_date) per task, no dependency graph — `GET /annotations/gantt/rows`; chart rendering itself is Phase 5
+    - [x] Review workflow: assignee submits for review -> `pending_review`; assigner approves (-> `done`) or rejects (-> back to `in_progress` with a reason). Assignee can never self-approve; only the task's creator or an admin can review — enforced and tested
+    - [ ] Per-assignment chat room — `conversation_id` column exists on `annotations` (no FK yet), wiring it up is part of the Chat module below
+  - [ ] Chat: DMs, group conversations, read receipts, annotation/task linking (ports messaging from the legacy app) — also adds the FK from `annotations.conversation_id`
   - [ ] CAPEX pricing admin: CRUD over the EQ/ES pricing table that `capex_solver.py` already consumes
   - [ ] Reviews/feedback module (ports reviews/comments/reactions from the legacy app — distinct from task review above)
   - [ ] Split-screen current-vs-forecast API: two read endpoints over data Phase 1 already produces — current status from `congestion_analysis`, forecast status from `forecast_results` filtered by year + quarter-week (13/26/39/52), matching the legacy `/api/forecast_data` contract. Map UI itself (synced Leaflet/MapLibre panes) is Phase 5.
