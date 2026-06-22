@@ -1,0 +1,54 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: 3w_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-threew}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-threew}
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./volumes/postgres:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio:latest
+    container_name: 3w_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-threew}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - ./volumes/minio:/data
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: 3w_ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./volumes/ollama:/root/.ollama
+
+  geoserver:
+    image: kartoza/geoserver:2.24.0
+    container_name: 3w_geoserver
+    restart: unless-stopped
+    ports:
+      - "8600:8080"
+    volumes:
+      - ./volumes/geoserver:/opt/geoserver/data_dir
+
+  metabase:
+    image: metabase/metabase:latest
+    container_name: 3w_metabase
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    depends_on:
+      - postgres
