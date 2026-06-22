@@ -34,15 +34,20 @@ def run(raw_csv_paths: list[str]) -> Path:
 
     con.execute(f"""
         CREATE OR REPLACE TEMP TABLE raw_sites AS
+        WITH normalized AS (
+            SELECT
+                regexp_replace(lower(site_id), '[-_]', '') AS site_id,
+                COALESCE(region, 'Unknown') AS region,
+                COALESCE(cluster, 'Unknown') AS cluster,
+                CAST(latitude AS DOUBLE) AS latitude,
+                CAST(longitude AS DOUBLE) AS longitude
+            FROM ({union_sql})
+            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+        )
         SELECT
-            regexp_replace(lower(site_id), '[-_]', '') AS site_id,
-            COALESCE(region, 'Unknown') AS region,
-            COALESCE(cluster, 'Unknown') AS cluster,
-            CAST(latitude AS DOUBLE) AS latitude,
-            CAST(longitude AS DOUBLE) AS longitude,
+            site_id, region, cluster, latitude, longitude,
             row_number() OVER (PARTITION BY site_id ORDER BY 1 DESC) AS rn
-        FROM ({union_sql})
-        WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+        FROM normalized
     """)
 
     output_path = Path(settings.parquet_dir) / f"{OUTPUT_TABLE}.parquet"
