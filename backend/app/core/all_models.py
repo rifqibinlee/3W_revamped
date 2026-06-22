@@ -3,4 +3,5 @@ Alembic autogenerate and by the test suite's create_all(), since
 SQLAlchemy only registers a model class with the shared Base when its
 module has actually been imported somewhere."""
 
+from app.annotations import models as _annotations_models  # noqa: F401
 from app.auth import models as _auth_models  # noqa: F401
