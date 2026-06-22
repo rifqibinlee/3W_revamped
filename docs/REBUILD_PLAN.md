@@ -26,7 +26,10 @@ Module-by-module phased rebuild of 3W. Each phase should be reviewed before movi
   - [x] Reviews/feedback — `app/reviews/`: rating/category/comment, toggleable like/dislike reactions
   - [x] Split-screen current-vs-forecast API — `app/analytics/`: `GET /analytics/current-status` and `GET /analytics/forecast-status?year=&week=`, both reading Phase 1's Parquet outputs directly and joining site coordinates. Map UI itself (synced Leaflet/MapLibre panes) is Phase 5.
   - [x] 92/92 tests passing, ruff clean across all of Phase 2
-- [ ] **Phase 3 — Spatial & planning pipelines:** CCTV site planning, Genset/substation routing
+- [x] **Phase 3 — Spatial & planning pipelines** — `app/siteplanning/`
+  - [x] CCTV site planning (`cctv.py`): ported from `cctv2_pipeline.py` near-verbatim (already QGIS-free pure Python); `POST /siteplanning/cctv/run` accepts GeoJSON + camera/offset specs as JSON, core pipeline still takes file paths internally
+  - [x] Genset/substation routing (`genset.py`): ported from `genset_pipeline.py`, road-network distance via OSMnx filtered to 2km, refactored with an injectable `graph_provider` so tests use a synthetic graph instead of the live OSM API; `POST /siteplanning/genset/route`
+  - [x] 14 new tests, 106/106 total passing, ruff clean
 - [ ] **Phase 4 — AI agent & RAG:** LangGraph agent tools against DuckDB, PDF ingestion pipeline with background worker
 - [ ] **Phase 5 — Frontend rebuild:** React + Vite + MapLibre GL, Metabase embedding
 - [ ] **Phase 6 — AWS readiness:** Terraform (S3, RDS, ECS/Fargate or App Runner), secrets migration, CI/CD deploy pipeline
