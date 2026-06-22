@@ -30,7 +30,12 @@ Module-by-module phased rebuild of 3W. Each phase should be reviewed before movi
   - [x] CCTV site planning (`cctv.py`): ported from `cctv2_pipeline.py` near-verbatim (already QGIS-free pure Python); `POST /siteplanning/cctv/run` accepts GeoJSON + camera/offset specs as JSON, core pipeline still takes file paths internally
   - [x] Genset/substation routing (`genset.py`): ported from `genset_pipeline.py`, road-network distance via OSMnx filtered to 2km, refactored with an injectable `graph_provider` so tests use a synthetic graph instead of the live OSM API; `POST /siteplanning/genset/route`
   - [x] 14 new tests, 106/106 total passing, ruff clean
-- [ ] **Phase 4 — AI agent & RAG:** LangGraph agent tools against DuckDB, PDF ingestion pipeline with background worker
+- [x] **Phase 4 — AI agent & RAG**
+  - [x] LLM provider switch (`app/agent/llm.py`): Claude primary (`ChatAnthropic`), Ollama automatic local-dev fallback when `ANTHROPIC_API_KEY` is unset — both implement LangChain's standard interface so the rest of the agent code is provider-agnostic. Embeddings always stay on Ollama (no Anthropic embeddings API)
+  - [x] Agent (`app/agent/`): LangGraph ReAct loop (`langchain.agents.create_agent`) with 3 tools rewired against Phase 1/2 data (current congestion, forecast status, CAPEX pricing) instead of the legacy Athena-backed versions — `POST /agent/chat`
+  - [x] RAG (`app/rag/`): PDF chunk/embed/store (ports `s3_ingest.py` minus the S3-specific download), cosine-similarity search computed in Python rather than pgvector's native operator (simpler, equally testable at this corpus scale) — `POST /rag/ingest` (FastAPI `BackgroundTasks`, not a separate task queue), `POST /rag/search`
+  - [x] Migration `0005`: pgvector extension + `knowledge_chunks` table, verified by generating real DDL in offline mode
+  - [x] 15 new tests, 121/121 total passing, ruff clean
 - [ ] **Phase 5 — Frontend rebuild:** React + Vite + MapLibre GL, Metabase embedding
 - [ ] **Phase 6 — AWS readiness:** Terraform (S3, RDS, ECS/Fargate or App Runner), secrets migration, CI/CD deploy pipeline
 
