@@ -38,7 +38,7 @@ STAGES: tuple[Stage, ...] = (
     Stage("pre_capex_upgrades", "Pre-Capacity-CAPEX-Upgrades.py", depends_on=("congestion_analysis", "cell_reference"), implemented=True),
     Stage("capex_upgrades", "Capacity-CAPEX-Upgrades.py", depends_on=("pre_capex_upgrades", "cell_reference"), implemented=True),
     Stage("forecast_results", "Capacity-Forecast-Results.py", depends_on=("xc_huawei", "xd_zte"), implemented=True),
-    Stage("coverage_holes", "Capacity-Coverage-Holes-Cluster-(DBSCAN).py"),
+    Stage("coverage_holes", "Capacity-Coverage-Holes-Cluster-(DBSCAN).py", implemented=True),
 )
 
 

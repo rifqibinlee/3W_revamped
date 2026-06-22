@@ -3,12 +3,13 @@
 Module-by-module phased rebuild of 3W. Each phase should be reviewed before moving to the next.
 
 - [x] **Phase 0 — Foundations:** repo structure, ADR, CI scaffolding, local docker-compose (Postgres, MinIO, Ollama)
-- [ ] **Phase 1 — Data layer migration:** ETL DAG ported from `scripts_example/` (legacy reference) to DuckDB SQL
+- [x] **Phase 1 — Data layer migration:** ETL DAG ported from `scripts_example/` (legacy reference) to DuckDB SQL
   - [x] DAG defined (`backend/app/ingestion/dag.py`) — explicit dependency order for all 11 stages (10 legacy scripts + `cell_reference`, extracted from 4 scripts that were each re-parsing the same raw reference file independently)
   - [x] `storage.py` — ephemeral raw-file staging from MinIO/S3 (never persisted beyond one transform)
-  - [x] Stage 10/11 implemented: `site_coordinates`, `site_coverage_params`, `cell_reference`, `xc_huawei`, `xd_zte`, `congestion_analysis`, `cd_combined_result`, `pre_capex_upgrades`, `capex_upgrades`, `forecast_results`
-  - [ ] `coverage_holes`
-  - [ ] Alembic-managed Postgres schema (replacing `app_database_setup.py`)
+  - [x] All 11/11 stages implemented: `site_coordinates`, `site_coverage_params`, `cell_reference`, `xc_huawei`, `xd_zte`, `congestion_analysis`, `cd_combined_result`, `pre_capex_upgrades`, `capex_upgrades`, `forecast_results`, `coverage_holes`
+  - [x] 40/40 tests passing, ruff clean
+  - [ ] Alembic-managed Postgres schema (replacing `app_database_setup.py`) — moved to Phase 2 since it's transactional, not analytics
+  - [ ] Not yet built: an orchestrator that walks the DAG end-to-end against real raw files (each stage is implemented and tested in isolation with synthetic fixtures, but hasn't been run against the actual `dataset_example/` files or wired into a scheduled job)
 - [ ] **Phase 2 — Core domain services:** Auth/IAM, Annotations, Chat, CAPEX pricing, Reviews
 - [ ] **Phase 3 — Spatial & planning pipelines:** CCTV site planning, Genset/substation routing
 - [ ] **Phase 4 — AI agent & RAG:** LangGraph agent tools against DuckDB, PDF ingestion pipeline with background worker
