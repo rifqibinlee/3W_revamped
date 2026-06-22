@@ -20,8 +20,8 @@ Module-by-module phased rebuild of 3W. Each phase should be reviewed before movi
     - [x] Task fields: assignee, due date, status (todo/in_progress/pending_review/done/rejected)
     - [x] Gantt endpoint: simple per-assignee timeline (created_at -> due_date) per task, no dependency graph — `GET /annotations/gantt/rows`; chart rendering itself is Phase 5
     - [x] Review workflow: assignee submits for review -> `pending_review`; assigner approves (-> `done`) or rejects (-> back to `in_progress` with a reason). Assignee can never self-approve; only the task's creator or an admin can review — enforced and tested
-    - [ ] Per-assignment chat room — `conversation_id` column exists on `annotations` (no FK yet), wiring it up is part of the Chat module below
-  - [ ] Chat: DMs, group conversations, read receipts, annotation/task linking (ports messaging from the legacy app) — also adds the FK from `annotations.conversation_id`
+    - [x] Per-assignment chat room: creating/assigning a task auto-creates a direct conversation between creator and assignee via `chat.service.get_or_create_direct_conversation`
+  - [x] Chat — `app/chat/`: DMs (idempotent get-or-create), group conversations, send/list messages gated by participant membership, per-user unread counts. Migration `0003` adds the FK from `annotations.conversation_id` deferred since `0002`
   - [ ] CAPEX pricing admin: CRUD over the EQ/ES pricing table that `capex_solver.py` already consumes
   - [ ] Reviews/feedback module (ports reviews/comments/reactions from the legacy app — distinct from task review above)
   - [ ] Split-screen current-vs-forecast API: two read endpoints over data Phase 1 already produces — current status from `congestion_analysis`, forecast status from `forecast_results` filtered by year + quarter-week (13/26/39/52), matching the legacy `/api/forecast_data` contract. Map UI itself (synced Leaflet/MapLibre panes) is Phase 5.
