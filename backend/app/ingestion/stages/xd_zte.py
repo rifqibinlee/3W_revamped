@@ -69,6 +69,7 @@ def _first_sheet_to_parquet(path: str) -> str:
     df = xls.parse(sheet_name=xls.sheet_names[0])
     xls.close()
     tmp = tempfile.NamedTemporaryFile(suffix=".parquet", delete=False)
+    tmp.close()  # Windows can't delete a file with an open handle later
     parquet_safe.to_parquet(df, tmp.name)
     return tmp.name
 
@@ -182,7 +183,12 @@ def _run(con, raw_file_path: str, cell_reference_path: str) -> Path:
             FROM with_ref
         """)
 
-        output_path = Path(settings.parquet_dir) / f"{OUTPUT_TABLE}.parquet"
+        # Each call processes one raw weekly file — the output filename must
+        # encode that, or calling this once per week (as the DAG requires)
+        # silently overwrites the previous week's output under the same
+        # static filename.
+        safe_stem = re.sub(r"[^A-Za-z0-9]", "_", Path(raw_file_path).stem)
+        output_path = Path(settings.parquet_dir) / f"{OUTPUT_TABLE}_{safe_stem}.parquet"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         con.execute(f"""
             COPY (

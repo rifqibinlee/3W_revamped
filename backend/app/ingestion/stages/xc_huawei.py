@@ -251,7 +251,12 @@ def _run(con, raw_file_path: str, cell_reference_path: str, temp_csv: str | None
                 ON pc.site_id = ref_by_site.site_id
         """)
 
-        output_path = Path(settings.parquet_dir) / f"{OUTPUT_TABLE}.parquet"
+        # Each call processes one raw weekly file — the output filename must
+        # encode that, or calling this once per week (as the DAG requires)
+        # silently overwrites the previous week's output under the same
+        # static filename.
+        safe_stem = re.sub(r"[^A-Za-z0-9]", "_", Path(raw_file_path).stem)
+        output_path = Path(settings.parquet_dir) / f"{OUTPUT_TABLE}_{safe_stem}.parquet"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         con.execute(f"""
             COPY (

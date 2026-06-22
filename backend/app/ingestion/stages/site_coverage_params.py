@@ -90,6 +90,7 @@ def _excel_sheets_to_parquet(path: str) -> list[str]:
         if df.empty:
             continue
         tmp = tempfile.NamedTemporaryFile(suffix=".parquet", delete=False)
+        tmp.close()  # Windows can't delete a file with an open handle later
         parquet_safe.to_parquet(df, tmp.name)
         out_paths.append(tmp.name)
     xls.close()

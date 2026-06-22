@@ -24,10 +24,14 @@ cell_reference, never from the raw file.
 """
 
 import re
+import tempfile
 from pathlib import Path
+
+import pandas as pd
 
 from app.analytics.db import get_connection
 from app.core.config import settings
+from app.ingestion import parquet_safe
 
 OUTPUT_TABLE = "pre_capex_upgrades"
 
@@ -38,6 +42,25 @@ def _detect_column(columns: list[str], must_contain_all: tuple[str, ...]) -> str
         if all(k in cl for k in must_contain_all):
             return col
     return None
+
+
+def _excel_sheets_to_parquet(path: str) -> list[str]:
+    """xlsb/xlsx aren't handled by read_csv/read_parquet — converts each
+    sheet to a temp Parquet, matching the legacy script's per-sheet
+    'pd.ExcelFile(...).sheet_names' loop for this exact stage."""
+    engine = "pyxlsb" if path.lower().endswith(".xlsb") else None
+    xls = pd.ExcelFile(path, engine=engine)
+    out_paths = []
+    for sheet in xls.sheet_names:
+        df = xls.parse(sheet_name=sheet)
+        if df.empty:
+            continue
+        tmp = tempfile.NamedTemporaryFile(suffix=".parquet", delete=False)
+        tmp.close()  # Windows can't delete a file with an open handle later
+        parquet_safe.to_parquet(df, tmp.name)
+        out_paths.append(tmp.name)
+    xls.close()
+    return out_paths
 
 
 def _parse_year_week(filename: str) -> tuple[int, int]:
@@ -57,55 +80,74 @@ def run(raw_file_path: str, cell_reference_path: str, congestion_path: str, data
         raise ValueError(f"dataset_type must be 'xC' or 'xD', got {dataset_type!r}")
 
     con = get_connection()
+    temp_parquets: list[str] = []
     try:
-        return _run(con, raw_file_path, cell_reference_path, congestion_path, dataset_type)
+        return _run(con, raw_file_path, cell_reference_path, congestion_path, dataset_type, temp_parquets)
     finally:
         con.close()
+        for p in temp_parquets:
+            Path(p).unlink(missing_ok=True)
 
 
-def _run(con, raw_file_path: str, cell_reference_path: str, congestion_path: str, dataset_type: str) -> Path | None:
+def _run(con, raw_file_path: str, cell_reference_path: str, congestion_path: str, dataset_type: str, temp_parquets: list[str]) -> Path | None:
     file_year, file_week = _parse_year_week(raw_file_path)
-    reader = "read_csv" if raw_file_path.lower().endswith(".csv") else "read_parquet"
-    # sample_size=-1 scans the whole file for type inference instead of the
-    # first ~20k rows, avoiding cast errors on columns that are numeric
-    # early on but switch to text later in large files.
-    reader_opts = ", ignore_errors=true, sample_size=-1" if reader == "read_csv" else ""
-    con.execute(f"CREATE OR REPLACE TEMP VIEW raw AS SELECT * FROM {reader}('{raw_file_path}'{reader_opts})")
-    raw_columns = [r[0] for r in con.execute("DESCRIBE raw").fetchall()]
 
-    cell_col = _detect_column(raw_columns, ("cell", "name"))
-    bw_col = _detect_column(raw_columns, ("bw",))
-    if dataset_type == "xC":
-        util_col = _detect_column(raw_columns, ("bh", "rb", "util"))
-        user_col = _detect_column(raw_columns, ("user", "count"))
+    lower = raw_file_path.lower()
+    if lower.endswith((".csv", ".parquet")):
+        sources = [raw_file_path]
     else:
-        util_col = _detect_column(raw_columns, ("eric_prb", "utilzation"))
-        user_col = None
+        sources = _excel_sheets_to_parquet(raw_file_path)
+        temp_parquets.extend(sources)
 
-    if not cell_col or not util_col:
+    selects: list[str] = []
+    i = 0
+    for source in sources:
+        reader = "read_csv" if source.lower().endswith(".csv") else "read_parquet"
+        reader_opts = ", ignore_errors=true, sample_size=-1" if reader == "read_csv" else ""
+        con.execute(f"CREATE OR REPLACE TEMP VIEW raw_{i} AS SELECT * FROM {reader}('{source}'{reader_opts})")
+        raw_columns = [r[0] for r in con.execute(f"DESCRIBE raw_{i}").fetchall()]
+
+        cell_col = _detect_column(raw_columns, ("cell", "name"))
+        bw_col = _detect_column(raw_columns, ("bw",))
+        if dataset_type == "xC":
+            util_col = _detect_column(raw_columns, ("bh", "rb", "util"))
+            user_col = _detect_column(raw_columns, ("user", "count"))
+        else:
+            util_col = _detect_column(raw_columns, ("eric_prb", "utilzation"))
+            user_col = None
+
+        if not cell_col or not util_col:
+            i += 1
+            continue
+
+        bw_expr = f'COALESCE(TRY_CAST(raw_{i}."{bw_col}" AS DOUBLE), 0.0) * 5.0' if bw_col else None
+        user_expr = f'COALESCE(TRY_CAST(raw_{i}."{user_col}" AS DOUBLE), 0.0)' if user_col else "0.0"
+
+        # A bw column in the raw file always wins, even if it's 0/blank for a
+        # given row — the legacy script never falls back to the reference
+        # lookup in that case, it only uses the reference avail_prb when the
+        # raw file has no bw column at all.
+        avail_prb_expr = bw_expr if bw_expr else "COALESCE(ref.avail_prb, 0.0)"
+
+        con.execute(f"""
+            CREATE OR REPLACE TEMP TABLE rows_with_rb_{i} AS
+            SELECT
+                trim(CAST(raw_{i}."{cell_col}" AS VARCHAR)) AS cell_name,
+                ref.zoom_sector_id,
+                (COALESCE(TRY_CAST(raw_{i}."{util_col}" AS DOUBLE), 0.0) / 100.0) * {avail_prb_expr} AS rb_used,
+                {user_expr} AS user_count
+            FROM raw_{i}
+            LEFT JOIN read_parquet('{cell_reference_path}') ref
+                ON trim(CAST(raw_{i}."{cell_col}" AS VARCHAR)) = ref.cell_name
+            WHERE raw_{i}."{cell_col}" IS NOT NULL AND ref.zoom_sector_id IS NOT NULL
+        """)
+        selects.append(f"SELECT * FROM rows_with_rb_{i}")
+        i += 1
+
+    if not selects:
         return None
 
-    bw_expr = f'COALESCE(TRY_CAST("{bw_col}" AS DOUBLE), 0.0) * 5.0' if bw_col else None
-    user_expr = f'COALESCE(TRY_CAST("{user_col}" AS DOUBLE), 0.0)' if user_col else "0.0"
-
-    # A bw column in the raw file always wins, even if it's 0/blank for a
-    # given row — the legacy script never falls back to the reference
-    # lookup in that case, it only uses the reference avail_prb when the
-    # raw file has no bw column at all.
-    avail_prb_expr = bw_expr if bw_expr else "COALESCE(ref.avail_prb, 0.0)"
-
-    con.execute(f"""
-        CREATE OR REPLACE TEMP TABLE rows_with_rb AS
-        SELECT
-            trim(CAST(raw."{cell_col}" AS VARCHAR)) AS cell_name,
-            ref.zoom_sector_id,
-            (COALESCE(TRY_CAST(raw."{util_col}" AS DOUBLE), 0.0) / 100.0) * {avail_prb_expr} AS rb_used,
-            {user_expr} AS user_count
-        FROM raw
-        LEFT JOIN read_parquet('{cell_reference_path}') ref
-            ON trim(CAST(raw."{cell_col}" AS VARCHAR)) = ref.cell_name
-        WHERE raw."{cell_col}" IS NOT NULL AND ref.zoom_sector_id IS NOT NULL
-    """)
+    con.execute(f"CREATE OR REPLACE TEMP TABLE rows_with_rb AS {' UNION ALL '.join(selects)}")
 
     if dataset_type == "xC":
         con.execute("""
