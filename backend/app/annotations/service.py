@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.annotations.models import Annotation, AnnotationComment, TaskStatus
 from app.auth.models import Role, User
+from app.chat import service as chat_service
 
 
 class NotFoundError(Exception):
@@ -43,6 +44,10 @@ def create_annotation(
     """Creates a note (assignee_id=None) or a task (assignee_id set,
     status starts at TODO) — same entity, the only difference is whether
     assignee_id is populated."""
+    conversation_id = None
+    if assignee_id:
+        conversation_id = chat_service.get_or_create_direct_conversation(db, creator.id, assignee_id).id
+
     annotation = Annotation(
         creator_id=creator.id,
         title=title,
@@ -52,6 +57,7 @@ def create_annotation(
         assignee_id=assignee_id,
         due_date=due_date,
         status=TaskStatus.TODO if assignee_id else None,
+        conversation_id=conversation_id,
     )
     db.add(annotation)
     db.commit()
@@ -60,15 +66,21 @@ def create_annotation(
 
 
 def assign_task(db: Session, annotation: Annotation, assignee_id: str, due_date: datetime) -> Annotation:
-    """Converts a note into a task. Re-assigning an existing task (rather
-    than a bare note) resets it back to TODO — picking up a task at a new
-    assignee shouldn't inherit the old assignee's in-progress/review state."""
+    """Converts a note into a task, auto-creating the task's chat room
+    (a direct conversation between creator and assignee) if it doesn't
+    already have one. Re-assigning an existing task (rather than a bare
+    note) resets it back to TODO — picking up a task at a new assignee
+    shouldn't inherit the old assignee's in-progress/review state, and
+    gets its own fresh conversation with the new assignee."""
     annotation.assignee_id = assignee_id
     annotation.due_date = due_date
     annotation.status = TaskStatus.TODO
     annotation.reviewed_by_id = None
     annotation.reviewed_at = None
     annotation.rejection_reason = None
+    annotation.conversation_id = chat_service.get_or_create_direct_conversation(
+        db, annotation.creator_id, assignee_id
+    ).id
     db.commit()
     db.refresh(annotation)
     return annotation

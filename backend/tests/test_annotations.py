@@ -17,6 +17,34 @@ def test_unassigned_annotation_is_a_plain_note(db_session) -> None:
     note = service.create_annotation(db_session, creator, "Pole down", GEOMETRY)
     assert note.assignee_id is None
     assert note.status is None
+    assert note.conversation_id is None
+
+
+def test_assigned_task_gets_a_chat_room(db_session) -> None:
+    from app.chat import service as chat_service
+
+    creator = _user(db_session, "creator_chatroom")
+    assignee = _user(db_session, "assignee_chatroom")
+    due = datetime.now(timezone.utc) + timedelta(days=1)
+
+    task = service.create_annotation(db_session, creator, "Fix it", GEOMETRY, assignee_id=assignee.id, due_date=due)
+    assert task.conversation_id is not None
+
+    # The chat room is the same one get_or_create_direct_conversation
+    # would resolve to for this creator/assignee pair.
+    expected = chat_service.get_or_create_direct_conversation(db_session, creator.id, assignee.id)
+    assert task.conversation_id == expected.id
+
+
+def test_assigning_a_note_also_creates_a_chat_room(db_session) -> None:
+    creator = _user(db_session, "creator_chatroom2")
+    assignee = _user(db_session, "assignee_chatroom2")
+    note = service.create_annotation(db_session, creator, "Just a note", GEOMETRY)
+    assert note.conversation_id is None
+
+    due = datetime.now(timezone.utc) + timedelta(days=1)
+    task = service.assign_task(db_session, note, assignee.id, due)
+    assert task.conversation_id is not None
 
 
 def test_creating_with_assignee_starts_as_task_todo(db_session) -> None:

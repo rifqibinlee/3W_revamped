@@ -5,3 +5,4 @@ module has actually been imported somewhere."""
 
 from app.annotations import models as _annotations_models  # noqa: F401
 from app.auth import models as _auth_models  # noqa: F401
+from app.chat import models as _chat_models  # noqa: F401
