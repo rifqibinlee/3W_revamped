@@ -23,9 +23,11 @@ dist/
 *.csv
 *.xlsb
 *.xlsx
+*.duckdb
 data/
 dataset_example/
 scripts/raw_output/
+local_run_output/
 
 # IDE / OS
 .vscode/

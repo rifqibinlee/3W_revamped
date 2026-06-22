@@ -66,7 +66,11 @@ def run(raw_file_path: str, cell_reference_path: str, congestion_path: str, data
 def _run(con, raw_file_path: str, cell_reference_path: str, congestion_path: str, dataset_type: str) -> Path | None:
     file_year, file_week = _parse_year_week(raw_file_path)
     reader = "read_csv" if raw_file_path.lower().endswith(".csv") else "read_parquet"
-    con.execute(f"CREATE OR REPLACE TEMP VIEW raw AS SELECT * FROM {reader}('{raw_file_path}')")
+    # sample_size=-1 scans the whole file for type inference instead of the
+    # first ~20k rows, avoiding cast errors on columns that are numeric
+    # early on but switch to text later in large files.
+    reader_opts = ", ignore_errors=true, sample_size=-1" if reader == "read_csv" else ""
+    con.execute(f"CREATE OR REPLACE TEMP VIEW raw AS SELECT * FROM {reader}('{raw_file_path}'{reader_opts})")
     raw_columns = [r[0] for r in con.execute("DESCRIBE raw").fetchall()]
 
     cell_col = _detect_column(raw_columns, ("cell", "name"))

@@ -31,7 +31,7 @@ import pandas as pd
 
 from app.analytics.db import get_connection
 from app.core.config import settings
-from app.ingestion import sql_macros
+from app.ingestion import parquet_safe, sql_macros
 
 OUTPUT_TABLE = "xd_zte"
 
@@ -69,7 +69,7 @@ def _first_sheet_to_parquet(path: str) -> str:
     df = xls.parse(sheet_name=xls.sheet_names[0])
     xls.close()
     tmp = tempfile.NamedTemporaryFile(suffix=".parquet", delete=False)
-    df.to_parquet(tmp.name, engine="pyarrow")
+    parquet_safe.to_parquet(df, tmp.name)
     return tmp.name
 
 
@@ -94,7 +94,11 @@ def _run(con, raw_file_path: str, cell_reference_path: str) -> Path:
             source_path = temp_file
 
         reader = "read_csv" if source_path.lower().endswith(".csv") else "read_parquet"
-        con.execute(f"CREATE OR REPLACE TEMP VIEW raw AS SELECT * FROM {reader}('{source_path}')")
+        # sample_size=-1 scans the whole file for type inference instead of
+        # the first ~20k rows, avoiding cast errors on columns that are
+        # numeric early on but switch to text later in large files.
+        reader_opts = ", ignore_errors=true, sample_size=-1" if reader == "read_csv" else ""
+        con.execute(f"CREATE OR REPLACE TEMP VIEW raw AS SELECT * FROM {reader}('{source_path}'{reader_opts})")
         raw_columns = [r[0] for r in con.execute("DESCRIBE raw").fetchall()]
 
         cleaned_to_raw: dict[str, str] = {}

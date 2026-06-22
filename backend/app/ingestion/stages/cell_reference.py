@@ -26,7 +26,7 @@ import pandas as pd
 
 from app.analytics.db import get_connection
 from app.core.config import settings
-from app.ingestion import sql_macros
+from app.ingestion import parquet_safe, sql_macros
 
 OUTPUT_TABLE = "cell_reference"
 
@@ -63,7 +63,7 @@ def _excel_ref_sheets_to_parquet(path: str) -> list[str]:
         if df.empty:
             continue
         tmp = tempfile.NamedTemporaryFile(suffix=".parquet", delete=False)
-        df.to_parquet(tmp.name, engine="pyarrow")
+        parquet_safe.to_parquet(df, tmp.name)
         out_paths.append(tmp.name)
     xls.close()
     return out_paths
@@ -149,7 +149,11 @@ def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> Path:
 
         for source in sources:
             reader = "read_csv" if source.lower().endswith(".csv") else "read_parquet"
-            con.execute(f"CREATE OR REPLACE TEMP VIEW read_file AS SELECT * FROM {reader}('{source}')")
+            # sample_size=-1 scans the whole file for type inference instead
+            # of the first ~20k rows, avoiding cast errors on columns that
+            # are numeric early on but switch to text later in large files.
+            reader_opts = ", ignore_errors=true, sample_size=-1" if reader == "read_csv" else ""
+            con.execute(f"CREATE OR REPLACE TEMP VIEW read_file AS SELECT * FROM {reader}('{source}'{reader_opts})")
             columns = [r[0] for r in con.execute("DESCRIBE read_file").fetchall()]
             clause = _select_clause(columns)
             if clause:

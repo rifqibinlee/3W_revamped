@@ -19,6 +19,7 @@ import pandas as pd
 
 from app.analytics.db import get_connection
 from app.core.config import settings
+from app.ingestion import parquet_safe
 
 OUTPUT_TABLE = "site_coverage_params"
 
@@ -89,7 +90,7 @@ def _excel_sheets_to_parquet(path: str) -> list[str]:
         if df.empty:
             continue
         tmp = tempfile.NamedTemporaryFile(suffix=".parquet", delete=False)
-        df.to_parquet(tmp.name, engine="pyarrow")
+        parquet_safe.to_parquet(df, tmp.name)
         out_paths.append(tmp.name)
     xls.close()
     return out_paths
@@ -116,7 +117,13 @@ def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> Path:
 
         for source in sources:
             reader = "read_csv" if source.lower().endswith(".csv") else "read_parquet"
-            con.execute(f"CREATE OR REPLACE TEMP VIEW read_file AS SELECT * FROM {reader}('{source}')")
+            # sample_size=-1 forces DuckDB to scan the whole file for type
+            # inference instead of the first ~20k rows — real vendor CSVs
+            # routinely have a column that's numeric for thousands of rows
+            # then switches to a string value (e.g. "NBIOT") past the
+            # default sample window, which otherwise throws a cast error.
+            reader_opts = ", ignore_errors=true, sample_size=-1" if reader == "read_csv" else ""
+            con.execute(f"CREATE OR REPLACE TEMP VIEW read_file AS SELECT * FROM {reader}('{source}'{reader_opts})")
             columns = [r[0] for r in con.execute("DESCRIBE read_file").fetchall()]
             clause = _select_clause(columns)
             if clause:

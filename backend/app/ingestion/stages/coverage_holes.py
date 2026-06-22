@@ -23,6 +23,7 @@ from sklearn.neighbors import NearestNeighbors
 
 from app.analytics.db import get_connection
 from app.core.config import settings
+from app.ingestion import parquet_safe
 
 OUTPUT_TABLE = "coverage_holes"
 
@@ -52,7 +53,7 @@ def _excel_sheets_to_sources(path: str) -> list[str]:
         if df.empty:
             continue
         tmp = tempfile.NamedTemporaryFile(suffix=".parquet", delete=False)
-        df.to_parquet(tmp.name, engine="pyarrow")
+        parquet_safe.to_parquet(df, tmp.name)
         out_paths.append(tmp.name)
     xls.close()
     return out_paths
@@ -112,9 +113,14 @@ def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> Path | Non
         for source in sources:
             if source.lower().endswith(".csv"):
                 reader = "read_csv"
+                # sample_size=-1 scans the whole file for type inference
+                # instead of the first ~20k rows, avoiding cast errors on
+                # columns that are numeric early then switch to text later.
+                reader_opts = ", ignore_errors=true, sample_size=-1"
             else:
                 reader = "read_parquet"
-            con.execute(f"CREATE OR REPLACE TEMP VIEW src AS SELECT * FROM {reader}('{source}')")
+                reader_opts = ""
+            con.execute(f"CREATE OR REPLACE TEMP VIEW src AS SELECT * FROM {reader}('{source}'{reader_opts})")
             columns = [r[0].strip() for r in con.execute("DESCRIBE src").fetchall()]
 
             lat_col = _first_present(columns, LAT_CANDIDATES)
