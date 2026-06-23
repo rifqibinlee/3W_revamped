@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.analytics import service
 
@@ -33,6 +33,18 @@ def overview_stats() -> dict:
     return service.overview_stats()
 
 
+@router.get("/site-forecast/{site_id}")
+def site_forecast(
+    site_id: str,
+    metric: str = "eric_prb_util_rate",
+    horizon_weeks: int = Query(8, ge=1, le=52),
+) -> dict:
+    try:
+        return service.site_forecast(site_id, metric, horizon_weeks)
+    except service.InvalidMetricError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+
 def _filters(
     region: str | None = None,
     year: int | None = None,
@@ -56,19 +68,19 @@ def summary(filters: service.Filters = Depends(_filters)) -> dict:
 @router.get("/sector-metrics")
 def sector_metrics(
     filters: service.Filters = Depends(_filters), limit: int = 100, offset: int = 0
-) -> list[dict]:
+) -> dict:
     return service.sector_metrics(filters, limit, offset)
 
 
 @router.get("/congested-sectors")
 def congested_sectors(
     filters: service.Filters = Depends(_filters), limit: int = 100, offset: int = 0
-) -> list[dict]:
+) -> dict:
     return service.congested_sectors(filters, limit, offset)
 
 
 @router.get("/forecast-table")
 def forecast_table(
     filters: service.Filters = Depends(_filters), limit: int = 100, offset: int = 0
-) -> list[dict]:
+) -> dict:
     return service.forecast_table(filters, limit, offset)

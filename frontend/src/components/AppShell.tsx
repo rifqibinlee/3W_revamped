@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../lib/useAuth'
-import { ParticleBackground } from './ParticleBackground'
+import { AnimatedBackground } from './AnimatedBackground'
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard' },
@@ -22,7 +22,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="relative min-h-screen">
-      <ParticleBackground />
+      <AnimatedBackground />
       <div className="relative z-10 mx-auto max-w-6xl px-7 py-6">
         <header className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-2.5">

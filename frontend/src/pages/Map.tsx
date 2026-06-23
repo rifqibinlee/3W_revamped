@@ -731,9 +731,9 @@ export function MapPage() {
               <span className="text-white/55">Congested sites</span>
               <span className="font-semibold text-red-300">{overview?.total_congested_sites ?? '—'}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-white/55">Total CAPEX needed</span>
-              <span className="font-semibold">{fmtCurrency(overview?.total_capex)}</span>
+            <div>
+              <p className="text-white/55">Total CAPEX needed</p>
+              <p className="font-semibold">{fmtCurrency(overview?.total_capex)}</p>
             </div>
             <div className="border-t border-white/10 pt-2.5">
               <p className="text-white/55">Worst Ookla cluster</p>

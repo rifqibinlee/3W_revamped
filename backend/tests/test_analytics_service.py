@@ -51,13 +51,17 @@ def test_current_status_returns_empty_when_files_missing(tmp_path, monkeypatch) 
 
 def test_forecast_status_filters_by_year_and_week(tmp_path, monkeypatch) -> None:
     _setup(tmp_path, monkeypatch)
+    # forecast_results has no region column in the real schema — region
+    # must come from the site_coordinates join, not from the forecast
+    # table itself (a prior fixture with a fake region column here masked
+    # a real BinderException: "region" not found in FROM clause).
     _write_parquet(
         tmp_path / "forecast_results.parquet",
         [
-            ("SITE002_Macro_1", True, "Central", 13, 2026),
-            ("SITE002_Macro_1", False, "Central", 26, 2026),
+            ("SITE002_Macro_1", True, 13, 2026),
+            ("SITE002_Macro_1", False, 26, 2026),
         ],
-        ("zoom_sector_id", "congested", "region", "week", "year"),
+        ("zoom_sector_id", "congested", "week", "year"),
     )
     _write_parquet(
         tmp_path / "site_coordinates.parquet",
@@ -69,6 +73,7 @@ def test_forecast_status_filters_by_year_and_week(tmp_path, monkeypatch) -> None
     assert len(rows_w13) == 1
     assert rows_w13[0]["congested"] is True
     assert rows_w13[0]["longitude"] == 102.1
+    assert rows_w13[0]["region"] == "Central"
 
     rows_w26 = service.forecast_status(2026, 26)
     assert rows_w26[0]["congested"] is False
@@ -90,8 +95,9 @@ def test_sector_metrics_returns_all_rows_unfiltered(tmp_path, monkeypatch) -> No
         ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 10.0, 10, 2026),
         ("SITE002", "SITE002_Macro_1", "Southern", "C2", "Digi", False, 20.0, 10, 2026),
     ])
-    rows = service.sector_metrics(service.Filters())
-    assert len(rows) == 2
+    result = service.sector_metrics(service.Filters())
+    assert len(result["rows"]) == 2
+    assert result["total"] == 2
 
 
 def test_sector_metrics_filters_by_region(tmp_path, monkeypatch) -> None:
@@ -100,9 +106,21 @@ def test_sector_metrics_filters_by_region(tmp_path, monkeypatch) -> None:
         ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 10.0, 10, 2026),
         ("SITE002", "SITE002_Macro_1", "Southern", "C2", "Digi", False, 20.0, 10, 2026),
     ])
-    rows = service.sector_metrics(service.Filters(region="Central"))
-    assert len(rows) == 1
-    assert rows[0]["region"] == "Central"
+    result = service.sector_metrics(service.Filters(region="Central"))
+    assert len(result["rows"]) == 1
+    assert result["total"] == 1
+    assert result["rows"][0]["region"] == "Central"
+
+
+def test_sector_metrics_total_reflects_full_filtered_count_not_just_page(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_congestion_fixture(tmp_path, [
+        (f"SITE{i:03d}", f"SITE{i:03d}_Macro_1", "Central", "C1", "Celcom", False, 10.0, 10, 2026)
+        for i in range(5)
+    ])
+    result = service.sector_metrics(service.Filters(), limit=2, offset=0)
+    assert len(result["rows"]) == 2
+    assert result["total"] == 5
 
 
 def test_sector_metrics_filter_rejects_sql_injection_attempt(tmp_path, monkeypatch) -> None:
@@ -113,8 +131,9 @@ def test_sector_metrics_filter_rejects_sql_injection_attempt(tmp_path, monkeypat
     _write_congestion_fixture(tmp_path, [
         ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 10.0, 10, 2026),
     ])
-    rows = service.sector_metrics(service.Filters(region="x' OR '1'='1"))
-    assert rows == []
+    result = service.sector_metrics(service.Filters(region="x' OR '1'='1"))
+    assert result["rows"] == []
+    assert result["total"] == 0
 
 
 def test_congested_sectors_only_includes_congested(tmp_path, monkeypatch) -> None:
@@ -123,9 +142,10 @@ def test_congested_sectors_only_includes_congested(tmp_path, monkeypatch) -> Non
         ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 10.0, 10, 2026),
         ("SITE002", "SITE002_Macro_1", "Central", "C1", "Celcom", False, 20.0, 10, 2026),
     ])
-    rows = service.congested_sectors(service.Filters())
-    assert len(rows) == 1
-    assert rows[0]["zoom_sector_id"] == "SITE001_Macro_1"
+    result = service.congested_sectors(service.Filters())
+    assert len(result["rows"]) == 1
+    assert result["total"] == 1
+    assert result["rows"][0]["zoom_sector_id"] == "SITE001_Macro_1"
 
 
 def test_congested_sectors_combines_with_other_filters(tmp_path, monkeypatch) -> None:
@@ -134,24 +154,56 @@ def test_congested_sectors_combines_with_other_filters(tmp_path, monkeypatch) ->
         ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 10.0, 10, 2026),
         ("SITE002", "SITE002_Macro_1", "Southern", "C2", "Celcom", True, 20.0, 10, 2026),
     ])
-    rows = service.congested_sectors(service.Filters(region="Southern"))
-    assert len(rows) == 1
-    assert rows[0]["zoom_sector_id"] == "SITE002_Macro_1"
+    result = service.congested_sectors(service.Filters(region="Southern"))
+    assert len(result["rows"]) == 1
+    assert result["rows"][0]["zoom_sector_id"] == "SITE002_Macro_1"
 
 
 def test_forecast_table_filters_by_year(tmp_path, monkeypatch) -> None:
     _setup(tmp_path, monkeypatch)
+    # No region/cluster columns — forecast_results genuinely has none in
+    # the real schema (it's per-sector, not joined to site data); a test
+    # fixture with a fake region column previously masked a real
+    # BinderException when the region filter was applied to this table.
     _write_parquet(
         tmp_path / "forecast_results.parquet",
         [
-            ("SITE001_Macro_1", "Central", 1, 2026),
-            ("SITE001_Macro_1", "Central", 1, 2027),
+            ("SITE001_Macro_1", "Celcom", 1, 2026),
+            ("SITE001_Macro_1", "Celcom", 1, 2027),
         ],
-        ("zoom_sector_id", "region", "week", "year"),
+        ("zoom_sector_id", "operator", "week", "year"),
     )
-    rows = service.forecast_table(service.Filters(year=2026))
-    assert len(rows) == 1
-    assert rows[0]["year"] == 2026
+    result = service.forecast_table(service.Filters(year=2026))
+    assert len(result["rows"]) == 1
+    assert result["total"] == 1
+    assert result["rows"][0]["year"] == 2026
+
+
+def test_forecast_table_ignores_region_filter_since_table_has_no_region_column(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_parquet(
+        tmp_path / "forecast_results.parquet",
+        [("SITE001_Macro_1", "Celcom", 1, 2026)],
+        ("zoom_sector_id", "operator", "week", "year"),
+    )
+    # Would raise a DuckDB BinderException before the available_columns fix
+    result = service.forecast_table(service.Filters(region="Central"))
+    assert result["total"] == 1
+
+
+def test_forecast_table_filters_by_operator(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_parquet(
+        tmp_path / "forecast_results.parquet",
+        [
+            ("SITE001_Macro_1", "Celcom", 1, 2026),
+            ("SITE002_Macro_1", "Digi", 1, 2026),
+        ],
+        ("zoom_sector_id", "operator", "week", "year"),
+    )
+    result = service.forecast_table(service.Filters(operator="Digi"))
+    assert result["total"] == 1
+    assert result["rows"][0]["zoom_sector_id"] == "SITE002_Macro_1"
 
 
 def test_summary_stats(tmp_path, monkeypatch) -> None:
@@ -359,3 +411,72 @@ def test_overview_stats_aggregates_network_wide(tmp_path, monkeypatch) -> None:
     assert stats["total_capex"] == 50000.0
     assert stats["worst_ookla_cluster"] == {"cluster_id": 0, "data_source": "Ookla", "point_count": 2, "avg_signal": -115.5}
     assert stats["worst_mr_cluster"] == {"cluster_id": 5, "data_source": "MR", "point_count": 1, "avg_signal": -112.0}
+
+
+def test_site_forecast_returns_empty_when_no_data(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    result = service.site_forecast("SITE001", "eric_prb_util_rate")
+    assert result == {"site_id": "SITE001", "metric": "eric_prb_util_rate", "actual": [], "forecast": []}
+
+
+def test_site_forecast_rejects_invalid_metric(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    try:
+        service.site_forecast("SITE001", "bogus_metric")
+        assert False, "expected InvalidMetricError"
+    except service.InvalidMetricError:
+        pass
+
+
+def test_site_forecast_with_single_week_has_no_forecast(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_parquet(
+        tmp_path / "congestion_analysis.parquet",
+        [("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 10.0, 50.0, 5.0, 10, 2026)],
+        ("site_id", "zoom_sector_id", "region", "cluster", "operator", "congested",
+         "eric_data_volume_ul_dl", "eric_prb_util_rate", "eric_dl_user_ip_thpt", "week", "year"),
+    )
+    result = service.site_forecast("SITE001", "eric_prb_util_rate")
+    assert len(result["actual"]) == 1
+    assert result["forecast"] == []
+
+
+def test_site_forecast_projects_an_upward_trend(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    rows = [
+        ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", False, 10.0, 40.0 + i * 5.0, 5.0, 10 + i, 2026)
+        for i in range(6)
+    ]
+    _write_parquet(
+        tmp_path / "congestion_analysis.parquet",
+        rows,
+        ("site_id", "zoom_sector_id", "region", "cluster", "operator", "congested",
+         "eric_data_volume_ul_dl", "eric_prb_util_rate", "eric_dl_user_ip_thpt", "week", "year"),
+    )
+
+    result = service.site_forecast("SITE001", "eric_prb_util_rate", horizon_weeks=4)
+    assert len(result["actual"]) == 6
+    assert len(result["forecast"]) == 4
+    # clearly upward trend (5 pp/week) -> forecast values should keep climbing
+    assert result["forecast"][-1]["value"] > result["forecast"][0]["value"]
+    for point in result["forecast"]:
+        assert point["ci_lower"] <= point["value"] <= point["ci_upper"]
+
+
+def test_site_forecast_clamps_percentage_metric_to_100(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    rows = [
+        ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 10.0, 90.0 + i * 3.0, 5.0, 10 + i, 2026)
+        for i in range(5)
+    ]
+    _write_parquet(
+        tmp_path / "congestion_analysis.parquet",
+        rows,
+        ("site_id", "zoom_sector_id", "region", "cluster", "operator", "congested",
+         "eric_data_volume_ul_dl", "eric_prb_util_rate", "eric_dl_user_ip_thpt", "week", "year"),
+    )
+
+    result = service.site_forecast("SITE001", "eric_prb_util_rate", horizon_weeks=6)
+    for point in result["forecast"]:
+        assert point["value"] <= 100.0
+        assert point["ci_upper"] <= 100.0

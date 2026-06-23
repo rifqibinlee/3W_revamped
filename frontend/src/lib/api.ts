@@ -219,6 +219,11 @@ export interface OverviewStats {
   worst_mr_cluster: CoverageHoleSummary | null
 }
 
+export interface PaginatedResult<T> {
+  rows: T[]
+  total: number
+}
+
 export interface MapBounds {
   south: number
   west: number
@@ -255,12 +260,16 @@ export interface AnalyticsFilters {
   cluster?: string
 }
 
-function filterParams(filters: AnalyticsFilters = {}): string {
+function filterParams(filters: AnalyticsFilters = {}, page?: { limit: number; offset: number }): string {
   const params = new URLSearchParams()
   for (const [key, value] of Object.entries(filters)) {
     if (value !== undefined && value !== null && value !== '' && value !== 'All') {
       params.set(key, String(value))
     }
+  }
+  if (page) {
+    params.set('limit', String(page.limit))
+    params.set('offset', String(page.offset))
   }
   const qs = params.toString()
   return qs ? `?${qs}` : ''
@@ -305,14 +314,14 @@ export const api = {
 
   summary: (filters: AnalyticsFilters = {}) => request<SummaryStats>(`/analytics/summary${filterParams(filters)}`),
 
-  sectorMetrics: (filters: AnalyticsFilters = {}) =>
-    request<SectorMetricRow[]>(`/analytics/sector-metrics${filterParams(filters)}`),
+  sectorMetrics: (filters: AnalyticsFilters = {}, page = { limit: 25, offset: 0 }) =>
+    request<PaginatedResult<SectorMetricRow>>(`/analytics/sector-metrics${filterParams(filters, page)}`),
 
-  congestedSectors: (filters: AnalyticsFilters = {}) =>
-    request<SectorMetricRow[]>(`/analytics/congested-sectors${filterParams(filters)}`),
+  congestedSectors: (filters: AnalyticsFilters = {}, page = { limit: 25, offset: 0 }) =>
+    request<PaginatedResult<SectorMetricRow>>(`/analytics/congested-sectors${filterParams(filters, page)}`),
 
-  forecastTable: (filters: AnalyticsFilters = {}) =>
-    request<ForecastRow[]>(`/analytics/forecast-table${filterParams(filters)}`),
+  forecastTable: (filters: AnalyticsFilters = {}, page = { limit: 25, offset: 0 }) =>
+    request<PaginatedResult<ForecastRow>>(`/analytics/forecast-table${filterParams(filters, page)}`),
 
   createProject: (input: { title: string; description?: string; assignee_id?: string }) =>
     request<ProjectOut>('/projects', { method: 'POST', body: JSON.stringify(input) }),

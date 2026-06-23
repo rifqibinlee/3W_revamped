@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { AnimatedBackground } from '../components/AnimatedBackground'
 import { GlassPanel } from '../components/GlassPanel'
-import { ParticleBackground } from '../components/ParticleBackground'
 import { ApiError } from '../lib/api'
 import { useAuth } from '../lib/useAuth'
 
@@ -29,7 +29,7 @@ export function Login() {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center">
-      <ParticleBackground />
+      <AnimatedBackground />
       <GlassPanel className="relative z-10 w-full max-w-sm">
         <div className="mb-6 flex items-center gap-2.5">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-accent-400 to-sky-500 font-display text-sm font-bold text-ink-900">

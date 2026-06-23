@@ -11,7 +11,12 @@ DuckDB — no separate analytics database, consistent with the rest of
 this rebuild.
 """
 
+from datetime import date, timedelta
 from pathlib import Path
+
+import numpy as np
+from scipy import stats
+from sklearn.linear_model import LinearRegression
 
 from app.analytics.db import get_connection
 from app.core.config import settings
@@ -19,6 +24,101 @@ from app.core.config import settings
 
 def _parquet_path(name: str) -> Path:
     return Path(settings.parquet_dir) / f"{name}.parquet"
+
+
+FORECAST_METRICS = ("eric_data_volume_ul_dl", "eric_prb_util_rate", "eric_dl_user_ip_thpt")
+
+# Metrics that can never go negative or (for a rate) above 100 — the
+# legacy /plot endpoint clamps its confidence band to "plausible bounds"
+# the same way; without this a wide band on a short history can dip the
+# lower bound below zero or push a percentage past 100.
+_METRIC_BOUNDS: dict[str, tuple[float, float | None]] = {
+    "eric_data_volume_ul_dl": (0.0, None),
+    "eric_prb_util_rate": (0.0, 100.0),
+    "eric_dl_user_ip_thpt": (0.0, None),
+}
+
+
+class InvalidMetricError(Exception):
+    pass
+
+
+def site_forecast(site_id: str, metric: str, horizon_weeks: int = 8) -> dict:
+    """Live linear-regression forecast for one site's weekly metric
+    history, with a 95% prediction interval — ports the legacy /plot
+    endpoint's method (sklearn LinearRegression over days-since-start,
+    scipy.stats.t for the band) rather than reading the separately
+    precomputed forecast_results table, which is a different (ML-model)
+    forecast already used elsewhere (site-detail, the split-screen map)."""
+    if metric not in FORECAST_METRICS:
+        raise InvalidMetricError(f"metric must be one of {FORECAST_METRICS}, got {metric!r}")
+
+    path = _parquet_path("congestion_analysis")
+    empty = {"site_id": site_id.upper(), "metric": metric, "actual": [], "forecast": []}
+    if not path.exists():
+        return empty
+
+    con = get_connection()
+    try:
+        rows = con.execute(
+            f"""
+            SELECT year, week, avg({metric}) AS value
+            FROM read_parquet('{path}')
+            WHERE site_id = ?
+            GROUP BY year, week
+            ORDER BY year, week
+            """,
+            [site_id.upper()],
+        ).fetchall()
+    finally:
+        con.close()
+
+    if not rows:
+        return empty
+
+    dates = [date.fromisocalendar(year, week, 1) for year, week, _ in rows]
+    values = [v for _, _, v in rows]
+    start = dates[0]
+    x = np.array([(d - start).days for d in dates], dtype=float).reshape(-1, 1)
+    y = np.array(values, dtype=float)
+
+    actual = [{"date": d.isoformat(), "value": v} for d, v in zip(dates, values)]
+
+    if len(rows) < 2:
+        return {"site_id": site_id.upper(), "metric": metric, "actual": actual, "forecast": []}
+
+    model = LinearRegression().fit(x, y)
+    residuals = y - model.predict(x)
+    dof = max(len(x) - 2, 1)
+    residual_std = float(np.sqrt(np.sum(residuals**2) / dof)) if dof > 0 else 0.0
+    x_mean = float(x.mean())
+    ss_x = float(np.sum((x.flatten() - x_mean) ** 2)) or 1.0
+    t_value = float(stats.t.ppf(0.975, df=dof))
+
+    lower_bound, upper_bound = _METRIC_BOUNDS.get(metric, (None, None))
+
+    forecast = []
+    last_day = x.flatten()[-1]
+    for week_ahead in range(1, horizon_weeks + 1):
+        x0 = last_day + week_ahead * 7
+        pred = float(model.predict([[x0]])[0])
+        se = residual_std * np.sqrt(1 + 1 / len(x) + (x0 - x_mean) ** 2 / ss_x)
+        margin = t_value * se
+        lo, hi = pred - margin, pred + margin
+        if lower_bound is not None:
+            lo = max(lo, lower_bound)
+            pred = max(pred, lower_bound)
+        if upper_bound is not None:
+            hi = min(hi, upper_bound)
+            pred = min(pred, upper_bound)
+        forecast.append({
+            "date": (start + timedelta(days=x0)).isoformat(),
+            "value": pred,
+            "ci_lower": lo,
+            "ci_upper": hi,
+        })
+
+    return {"site_id": site_id.upper(), "metric": metric, "actual": actual, "forecast": forecast}
 
 
 def current_status() -> list[dict]:
@@ -51,7 +151,9 @@ def current_status() -> list[dict]:
 
 def forecast_status(year: int, week: int) -> list[dict]:
     """Forecast congestion status for a specific year/quarter-week (the
-    legacy UI offers W13/W26/W39/W52), joined with coordinates."""
+    legacy UI offers W13/W26/W39/W52), joined with coordinates. Region
+    comes from the site join — forecast_results itself has no region
+    column (it's per-sector, not joined to site data)."""
     forecast_path = _parquet_path("forecast_results")
     sites_path = _parquet_path("site_coordinates")
     if not forecast_path.exists() or not sites_path.exists():
@@ -59,15 +161,18 @@ def forecast_status(year: int, week: int) -> list[dict]:
 
     con = get_connection()
     try:
-        rows = con.execute(f"""
+        rows = con.execute(
+            f"""
             SELECT
-                f.zoom_sector_id, f.congested, f.region,
+                f.zoom_sector_id, f.congested, s.region,
                 s.site_id, s.latitude, s.longitude
             FROM read_parquet('{forecast_path}') f
             LEFT JOIN read_parquet('{sites_path}') s
                 ON split_part(f.zoom_sector_id, '_', 1) = s.site_id
-            WHERE f.year = {year} AND f.week = {week}
-        """).fetchdf()
+            WHERE f.year = ? AND f.week = ?
+            """,
+            [year, week],
+        ).fetchdf()
         return rows.to_dict("records")
     finally:
         con.close()
@@ -94,80 +199,98 @@ class Filters:
         self.operator = operator
         self.cluster = cluster
 
-    def where_clause(self, table_alias: str = "") -> tuple[str, list]:
+    def where_clause(self, table_alias: str = "", available_columns: tuple[str, ...] | None = None) -> tuple[str, list]:
+        """available_columns restricts which filters apply — forecast_results
+        has no region/cluster column (it's per-sector, not joined to site
+        data), so passing available_columns=("year","week","operator") there
+        avoids a DuckDB BinderException for the columns it doesn't have,
+        rather than silently filtering all other tables down to nothing."""
+        def _has(col: str) -> bool:
+            return available_columns is None or col in available_columns
+
         prefix = f"{table_alias}." if table_alias else ""
         clauses: list[str] = []
         params: list = []
-        if self.region and self.region != "All":
+        if self.region and self.region != "All" and _has("region"):
             clauses.append(f"{prefix}region = ?")
             params.append(self.region)
-        if self.year is not None:
+        if self.year is not None and _has("year"):
             clauses.append(f"{prefix}year = ?")
             params.append(self.year)
-        if self.week is not None:
+        if self.week is not None and _has("week"):
             clauses.append(f"{prefix}week = ?")
             params.append(self.week)
-        if self.operator and self.operator != "All":
+        if self.operator and self.operator != "All" and _has("operator"):
             clauses.append(f"{prefix}operator = ?")
             params.append(self.operator)
-        if self.cluster:
+        if self.cluster and _has("cluster"):
             clauses.append(f"{prefix}cluster = ?")
             params.append(self.cluster)
         sql = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         return sql, params
 
 
-def sector_metrics(filters: Filters, limit: int = 100, offset: int = 0) -> list[dict]:
+def sector_metrics(filters: Filters, limit: int = 100, offset: int = 0) -> dict:
     """The 'Sector Performance Metrics' table: every sector row from
     congestion_analysis, unfiltered by congestion status (that's the
-    separate Congested Sectors table below)."""
+    separate Congested Sectors table below). Returns the page alongside
+    the total matching row count so the frontend can paginate the real
+    (often much larger than one page) result set instead of silently
+    truncating to whatever `limit` happens to default to."""
     path = _parquet_path("congestion_analysis")
     if not path.exists():
-        return []
+        return {"rows": [], "total": 0}
     con = get_connection()
     try:
         where_sql, params = filters.where_clause()
+        total = con.execute(f"SELECT count(*) FROM read_parquet('{path}'){where_sql}", params).fetchone()[0]
         rows = con.execute(
             f"SELECT * FROM read_parquet('{path}'){where_sql} ORDER BY year DESC, week DESC LIMIT ? OFFSET ?",
             params + [limit, offset],
         ).fetchdf()
-        return rows.to_dict("records")
+        return {"rows": rows.to_dict("records"), "total": total}
     finally:
         con.close()
 
 
-def congested_sectors(filters: Filters, limit: int = 100, offset: int = 0) -> list[dict]:
+def congested_sectors(filters: Filters, limit: int = 100, offset: int = 0) -> dict:
     """The 'Congested Sectors' table — same source, congested = true only."""
     path = _parquet_path("congestion_analysis")
     if not path.exists():
-        return []
+        return {"rows": [], "total": 0}
     con = get_connection()
     try:
         where_sql, params = filters.where_clause()
         congested_clause = " AND congested = true" if where_sql else " WHERE congested = true"
+        total = con.execute(
+            f"SELECT count(*) FROM read_parquet('{path}'){where_sql}{congested_clause}", params
+        ).fetchone()[0]
         rows = con.execute(
             f"SELECT * FROM read_parquet('{path}'){where_sql}{congested_clause} "
             "ORDER BY year DESC, week DESC LIMIT ? OFFSET ?",
             params + [limit, offset],
         ).fetchdf()
-        return rows.to_dict("records")
+        return {"rows": rows.to_dict("records"), "total": total}
     finally:
         con.close()
 
 
-def forecast_table(filters: Filters, limit: int = 100, offset: int = 0) -> list[dict]:
-    """The 'Future Performance Forecasts' table."""
+def forecast_table(filters: Filters, limit: int = 100, offset: int = 0) -> dict:
+    """The 'Future Performance Forecasts' table. forecast_results has no
+    region/cluster column (it's per-sector, not joined to site data), so
+    only year/week/operator filters apply here."""
     path = _parquet_path("forecast_results")
     if not path.exists():
-        return []
+        return {"rows": [], "total": 0}
     con = get_connection()
     try:
-        where_sql, params = filters.where_clause()
+        where_sql, params = filters.where_clause(available_columns=("year", "week", "operator"))
+        total = con.execute(f"SELECT count(*) FROM read_parquet('{path}'){where_sql}", params).fetchone()[0]
         rows = con.execute(
             f"SELECT * FROM read_parquet('{path}'){where_sql} ORDER BY year, week LIMIT ? OFFSET ?",
             params + [limit, offset],
         ).fetchdf()
-        return rows.to_dict("records")
+        return {"rows": rows.to_dict("records"), "total": total}
     finally:
         con.close()
 

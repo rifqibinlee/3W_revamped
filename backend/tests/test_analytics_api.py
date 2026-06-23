@@ -29,19 +29,22 @@ def test_forecast_status_endpoint_requires_year_and_week(client) -> None:
 def test_sector_metrics_endpoint_with_no_data(client) -> None:
     resp = client.get("/analytics/sector-metrics")
     assert resp.status_code == 200
-    assert resp.json() == []
+    assert resp.json() == {"rows": [], "total": 0}
 
 
 def test_congested_sectors_endpoint_with_no_data(client) -> None:
     resp = client.get("/analytics/congested-sectors")
     assert resp.status_code == 200
-    assert resp.json() == []
+    assert resp.json() == {"rows": [], "total": 0}
 
 
 def test_forecast_table_endpoint_with_filters(client) -> None:
+    # region is harmless here even though forecast_results has no region
+    # column — Filters.where_clause's available_columns restriction drops
+    # it instead of raising a DuckDB BinderException.
     resp = client.get("/analytics/forecast-table?region=Central&year=2026")
     assert resp.status_code == 200
-    assert resp.json() == []
+    assert resp.json() == {"rows": [], "total": 0}
 
 
 def test_summary_endpoint_with_no_data(client) -> None:
@@ -81,3 +84,19 @@ def test_overview_stats_endpoint_with_no_data(client) -> None:
         "total_sites": 0, "total_congested_sites": 0, "total_capex": 0.0,
         "worst_ookla_cluster": None, "worst_mr_cluster": None,
     }
+
+
+def test_site_forecast_endpoint_with_no_data(client) -> None:
+    resp = client.get("/analytics/site-forecast/SITE001")
+    assert resp.status_code == 200
+    assert resp.json() == {"site_id": "SITE001", "metric": "eric_prb_util_rate", "actual": [], "forecast": []}
+
+
+def test_site_forecast_endpoint_rejects_invalid_metric(client) -> None:
+    resp = client.get("/analytics/site-forecast/SITE001?metric=bogus")
+    assert resp.status_code == 400
+
+
+def test_site_forecast_endpoint_rejects_invalid_horizon(client) -> None:
+    resp = client.get("/analytics/site-forecast/SITE001?horizon_weeks=0")
+    assert resp.status_code == 422

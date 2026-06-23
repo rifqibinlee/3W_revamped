@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { DataTable, type Column } from '../components/DataTable'
 import { FilterBar } from '../components/FilterBar'
 import { GlassPanel } from '../components/GlassPanel'
+import { Pagination } from '../components/Pagination'
 import {
   api,
   type AnalyticsFilters,
@@ -11,6 +12,8 @@ import {
   type SummaryStats,
   type TaskOut,
 } from '../lib/api'
+
+const PAGE_SIZE = 12
 
 const STATUS_LABEL: Record<string, string> = {
   todo: 'Todo',
@@ -29,6 +32,14 @@ const STATUS_COLOR: Record<string, string> = {
 }
 
 const EMPTY_OPTIONS: FilterOptions = { regions: [], years: [], weeks: [], operators: [] }
+
+type TabKey = 'sectors' | 'forecast' | 'congested'
+
+const TABS: { key: TabKey; label: string }[] = [
+  { key: 'sectors', label: 'Sector performance metrics' },
+  { key: 'forecast', label: 'Future forecasts' },
+  { key: 'congested', label: 'Congested sectors' },
+]
 
 function CongestedBadge({ congested }: { congested: boolean }) {
   return (
@@ -82,11 +93,15 @@ export function Dashboard() {
   const [options, setOptions] = useState<FilterOptions>(EMPTY_OPTIONS)
   const [filters, setFilters] = useState<AnalyticsFilters>({})
   const [summary, setSummary] = useState<SummaryStats>({ total_sectors: 0, congested_count: 0, avg_volume_gb: 0 })
-  const [sectorRows, setSectorRows] = useState<SectorMetricRow[]>([])
-  const [congestedRows, setCongestedRows] = useState<SectorMetricRow[]>([])
-  const [forecastRows, setForecastRows] = useState<ForecastRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  const [activeTab, setActiveTab] = useState<TabKey>('sectors')
+  const [pages, setPages] = useState<Record<TabKey, number>>({ sectors: 0, forecast: 0, congested: 0 })
+
+  const [sectorResult, setSectorResult] = useState({ rows: [] as SectorMetricRow[], total: 0 })
+  const [congestedResult, setCongestedResult] = useState({ rows: [] as SectorMetricRow[], total: 0 })
+  const [forecastResult, setForecastResult] = useState({ rows: [] as ForecastRow[], total: 0 })
 
   useEffect(() => {
     Promise.all([api.ganttRows(), api.filterOptions()])
@@ -98,25 +113,28 @@ export function Dashboard() {
       .finally(() => setLoading(false))
   }, [])
 
-  const refresh = useCallback((currentFilters: AnalyticsFilters) => {
-    Promise.all([
-      api.summary(currentFilters),
-      api.sectorMetrics(currentFilters),
-      api.congestedSectors(currentFilters),
-      api.forecastTable(currentFilters),
-    ])
-      .then(([summaryStats, sectors, congested, forecast]) => {
-        setSummary(summaryStats)
-        setSectorRows(sectors)
-        setCongestedRows(congested)
-        setForecastRows(forecast)
-      })
-      .catch(() => setError('Could not load analytics data'))
-  }, [])
+  const setPage = (tab: TabKey, page: number) => setPages((prev) => ({ ...prev, [tab]: page }))
 
+  // Filters change -> reset all tab pages to the start and refetch the summary tile
   useEffect(() => {
-    refresh(filters)
-  }, [filters, refresh])
+    Promise.resolve().then(() => setPages({ sectors: 0, forecast: 0, congested: 0 }))
+    api.summary(filters).then(setSummary).catch(() => setError('Could not load analytics data'))
+  }, [filters])
+
+  const page = pages[activeTab]
+
+  const refreshActiveTab = useCallback(() => {
+    const pageArg = { limit: PAGE_SIZE, offset: page * PAGE_SIZE }
+    if (activeTab === 'sectors') {
+      api.sectorMetrics(filters, pageArg).then(setSectorResult).catch(() => setError('Could not load analytics data'))
+    } else if (activeTab === 'forecast') {
+      api.forecastTable(filters, pageArg).then(setForecastResult).catch(() => setError('Could not load analytics data'))
+    } else {
+      api.congestedSectors(filters, pageArg).then(setCongestedResult).catch(() => setError('Could not load analytics data'))
+    }
+  }, [activeTab, filters, page])
+
+  useEffect(refreshActiveTab, [refreshActiveTab])
 
   const tasksByStatus = useMemo(() => {
     const counts: Record<string, number> = { todo: 0, in_progress: 0, pending_review: 0, done: 0 }
@@ -180,36 +198,53 @@ export function Dashboard() {
       </div>
 
       <GlassPanel>
-        <p className="mb-1 font-display text-sm font-semibold">Sector performance metrics</p>
-        <p className="mb-3.5 text-xs text-white/55">Weekly aggregated performance indicators across all sectors.</p>
-        <DataTable columns={sectorColumns} rows={sectorRows} emptyMessage="No sector data — run the ETL pipeline first." />
-      </GlassPanel>
-
-      <GlassPanel>
-        <div className="flex flex-wrap items-center gap-4 text-xs text-white/60">
-          <span className="font-medium text-white/80">Legend</span>
-          <LegendItem color="bg-white/70" label="Actual" />
-          <LegendItem color="border border-dashed border-green-400" label="Forecast (vol)" />
-          <LegendItem color="border border-dashed border-accent-400" label="Forecast (PRB)" />
-          <LegendItem color="border border-dashed border-sky-400" label="Forecast (thpt)" />
-          <LegendItem color="bg-red-500/30 border border-red-400" label="Congested/alert" />
+        <div className="mb-3.5 flex flex-wrap gap-1.5 border-b border-white/10 pb-3.5">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setActiveTab(t.key)}
+              className={`rounded-xl px-3.5 py-2 text-sm font-semibold ${
+                activeTab === t.key ? 'bg-sky-400 text-ink-900' : 'text-white/70 hover:bg-white/5'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
-      </GlassPanel>
 
-      <GlassPanel>
-        <p className="mb-1 font-display text-sm font-semibold">Future performance forecasts</p>
-        <p className="mb-3.5 text-xs text-white/55">52-week predictions per sector.</p>
-        <DataTable columns={forecastColumns} rows={forecastRows} emptyMessage="No forecast data — run forecast_results first." />
-      </GlassPanel>
+        {activeTab === 'sectors' && (
+          <>
+            <p className="mb-3.5 text-xs text-white/55">Weekly aggregated performance indicators across all sectors.</p>
+            <DataTable columns={sectorColumns} rows={sectorResult.rows} emptyMessage="No sector data — run the ETL pipeline first." />
+            <Pagination page={page} pageSize={PAGE_SIZE} total={sectorResult.total} onPageChange={(p) => setPage('sectors', p)} />
+          </>
+        )}
 
-      <GlassPanel>
-        <p className="mb-1 font-display text-sm font-semibold">Congested sectors</p>
-        <p className="mb-3 text-xs text-white/55">Sectors experiencing performance degradation.</p>
-        <div className="mb-4 rounded-xl border border-red-400/30 bg-red-500/10 p-3 text-xs text-red-200">
-          <strong>Congestion criteria</strong> (urban/KMC + NIC: PRB ≥80% &amp; thpt &lt;7 Mbps · urban/KMC: PRB
-          ≥80% &amp; thpt &lt;5 Mbps · rural: PRB ≥92% &amp; thpt &lt;3 Mbps)
-        </div>
-        <DataTable columns={congestedColumns} rows={congestedRows} emptyMessage="No congested sectors." />
+        {activeTab === 'forecast' && (
+          <>
+            <p className="mb-3.5 text-xs text-white/55">52-week predictions per sector.</p>
+            <div className="mb-3.5 flex flex-wrap items-center gap-4 text-xs text-white/60">
+              <span className="font-medium text-white/80">Legend</span>
+              <LegendItem color="bg-white/70" label="Actual" />
+              <LegendItem color="border border-dashed border-green-400" label="Forecast (vol)" />
+              <LegendItem color="border border-dashed border-accent-400" label="Forecast (PRB)" />
+              <LegendItem color="border border-dashed border-sky-400" label="Forecast (thpt)" />
+            </div>
+            <DataTable columns={forecastColumns} rows={forecastResult.rows} emptyMessage="No forecast data — run forecast_results first." />
+            <Pagination page={page} pageSize={PAGE_SIZE} total={forecastResult.total} onPageChange={(p) => setPage('forecast', p)} />
+          </>
+        )}
+
+        {activeTab === 'congested' && (
+          <>
+            <div className="mb-3.5 rounded-xl border border-red-400/30 bg-red-500/10 p-3 text-xs text-red-200">
+              <strong>Congestion criteria</strong> (urban/KMC + NIC: PRB ≥80% &amp; thpt &lt;7 Mbps · urban/KMC: PRB
+              ≥80% &amp; thpt &lt;5 Mbps · rural: PRB ≥92% &amp; thpt &lt;3 Mbps)
+            </div>
+            <DataTable columns={congestedColumns} rows={congestedResult.rows} emptyMessage="No congested sectors." />
+            <Pagination page={page} pageSize={PAGE_SIZE} total={congestedResult.total} onPageChange={(p) => setPage('congested', p)} />
+          </>
+        )}
       </GlassPanel>
     </div>
   )
