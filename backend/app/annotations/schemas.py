@@ -3,18 +3,26 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
-class AnnotationCreate(BaseModel):
+class ProjectCreate(BaseModel):
     title: str
-    geometry: dict
     description: str | None = None
-    priority: str | None = None
     assignee_id: str | None = None
-    due_date: datetime | None = None
 
 
-class AssignTaskRequest(BaseModel):
+class AssignProjectRequest(BaseModel):
+    assignee_id: str
+
+
+class AnnotationCreate(BaseModel):
+    geometry: dict
+    label: str | None = None
+
+
+class TaskCreate(BaseModel):
+    title: str
     assignee_id: str
     due_date: datetime
+    description: str | None = None
 
 
 class RejectRequest(BaseModel):
@@ -25,16 +33,39 @@ class CommentCreate(BaseModel):
     body: str
 
 
-class AnnotationOut(BaseModel):
+class ProjectOut(BaseModel):
     id: str
     creator_id: str
     title: str
     description: str | None
-    geometry: dict
-    priority: str | None
     assignee_id: str | None
-    due_date: datetime | None
-    status: str | None
+    conversation_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AnnotationOut(BaseModel):
+    id: str
+    project_id: str
+    creator_id: str
+    label: str | None
+    geometry: dict
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TaskOut(BaseModel):
+    id: str
+    project_id: str
+    creator_id: str
+    title: str
+    description: str | None
+    assignee_id: str
+    due_date: datetime
+    status: str
     reviewed_by_id: str | None
     reviewed_at: datetime | None
     rejection_reason: str | None
@@ -46,7 +77,7 @@ class AnnotationOut(BaseModel):
 
 class CommentOut(BaseModel):
     id: str
-    annotation_id: str
+    project_id: str
     author_id: str
     body: str
     created_at: datetime

@@ -5,11 +5,11 @@ import { GlassPanel } from '../components/GlassPanel'
 import {
   api,
   type AnalyticsFilters,
-  type AnnotationOut,
   type FilterOptions,
   type ForecastRow,
   type SectorMetricRow,
   type SummaryStats,
+  type TaskOut,
 } from '../lib/api'
 
 const STATUS_LABEL: Record<string, string> = {
@@ -78,7 +78,7 @@ const forecastColumns: Column<ForecastRow>[] = [
 ]
 
 export function Dashboard() {
-  const [tasks, setTasks] = useState<AnnotationOut[]>([])
+  const [tasks, setTasks] = useState<TaskOut[]>([])
   const [options, setOptions] = useState<FilterOptions>(EMPTY_OPTIONS)
   const [filters, setFilters] = useState<AnalyticsFilters>({})
   const [summary, setSummary] = useState<SummaryStats>({ total_sectors: 0, congested_count: 0, avg_volume_gb: 0 })

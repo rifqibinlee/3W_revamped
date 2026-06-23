@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.annotations.models import Annotation, AnnotationComment, TaskStatus
+from app.annotations.models import Annotation, Project, ProjectComment, Task, TaskStatus
 from app.auth.models import Role, User
 from app.chat import service as chat_service
 
@@ -20,142 +20,176 @@ class PermissionDeniedError(Exception):
     pass
 
 
+class NotAProjectError(Exception):
+    """Raised when trying to create a task under a note (no assignee) —
+    there's no one to delegate the work to."""
+
+    pass
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def get_annotation(db: Session, annotation_id: str) -> Annotation:
-    annotation = db.get(Annotation, annotation_id)
-    if annotation is None:
-        raise NotFoundError(annotation_id)
-    return annotation
+def get_project(db: Session, project_id: str) -> Project:
+    project = db.get(Project, project_id)
+    if project is None:
+        raise NotFoundError(project_id)
+    return project
 
 
-def create_annotation(
+def get_task(db: Session, task_id: str) -> Task:
+    task = db.get(Task, task_id)
+    if task is None:
+        raise NotFoundError(task_id)
+    return task
+
+
+def create_project(
     db: Session,
     creator: User,
     title: str,
-    geometry: dict,
     description: str | None = None,
-    priority: str | None = None,
     assignee_id: str | None = None,
-    due_date: datetime | None = None,
-) -> Annotation:
-    """Creates a note (assignee_id=None) or a task (assignee_id set,
-    status starts at TODO) — same entity, the only difference is whether
-    assignee_id is populated."""
+) -> Project:
+    """Creates a note (assignee_id=None) or a project (assignee_id set) —
+    same entity, the only difference is whether assignee_id is populated.
+    Assigning at creation time auto-creates the project's chat room."""
     conversation_id = None
     if assignee_id:
         conversation_id = chat_service.get_or_create_direct_conversation(db, creator.id, assignee_id).id
 
-    annotation = Annotation(
-        creator_id=creator.id,
-        title=title,
-        description=description,
-        geometry=geometry,
-        priority=priority,
-        assignee_id=assignee_id,
-        due_date=due_date,
-        status=TaskStatus.TODO if assignee_id else None,
-        conversation_id=conversation_id,
+    project = Project(
+        creator_id=creator.id, title=title, description=description,
+        assignee_id=assignee_id, conversation_id=conversation_id,
     )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+def list_projects(db: Session) -> list[Project]:
+    return list(db.scalars(select(Project).order_by(Project.created_at.desc())))
+
+
+def assign_project(db: Session, project: Project, assignee_id: str) -> Project:
+    """Converts a note into a project (or reassigns an existing one),
+    auto-creating/reusing the chat room with the new assignee."""
+    project.assignee_id = assignee_id
+    project.conversation_id = chat_service.get_or_create_direct_conversation(
+        db, project.creator_id, assignee_id
+    ).id
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+def add_annotation(db: Session, project: Project, creator: User, geometry: dict, label: str | None = None) -> Annotation:
+    annotation = Annotation(project_id=project.id, creator_id=creator.id, geometry=geometry, label=label)
     db.add(annotation)
     db.commit()
     db.refresh(annotation)
     return annotation
 
 
-def assign_task(db: Session, annotation: Annotation, assignee_id: str, due_date: datetime) -> Annotation:
-    """Converts a note into a task, auto-creating the task's chat room
-    (a direct conversation between creator and assignee) if it doesn't
-    already have one. Re-assigning an existing task (rather than a bare
-    note) resets it back to TODO — picking up a task at a new assignee
-    shouldn't inherit the old assignee's in-progress/review state, and
-    gets its own fresh conversation with the new assignee."""
-    annotation.assignee_id = assignee_id
-    annotation.due_date = due_date
-    annotation.status = TaskStatus.TODO
-    annotation.reviewed_by_id = None
-    annotation.reviewed_at = None
-    annotation.rejection_reason = None
-    annotation.conversation_id = chat_service.get_or_create_direct_conversation(
-        db, annotation.creator_id, assignee_id
-    ).id
+def list_annotations(db: Session, project_id: str) -> list[Annotation]:
+    return list(db.scalars(select(Annotation).where(Annotation.project_id == project_id)))
+
+
+def create_task(
+    db: Session, project: Project, creator: User, title: str, assignee_id: str, due_date: datetime,
+    description: str | None = None,
+) -> Task:
+    if not project.assignee_id:
+        raise NotAProjectError("cannot create a task under a note — assign the project to someone first")
+
+    task = Task(
+        project_id=project.id, creator_id=creator.id, title=title, description=description,
+        assignee_id=assignee_id, due_date=due_date, status=TaskStatus.TODO,
+    )
+    db.add(task)
     db.commit()
-    db.refresh(annotation)
-    return annotation
+    db.refresh(task)
+    return task
 
 
-def _require_status(annotation: Annotation, expected: str) -> None:
-    if annotation.status != expected:
-        raise InvalidTransitionError(f"expected status {expected!r}, got {annotation.status!r}")
+def list_tasks(db: Session, project_id: str | None = None, assignee_id: str | None = None) -> list[Task]:
+    stmt = select(Task)
+    if project_id:
+        stmt = stmt.where(Task.project_id == project_id)
+    if assignee_id:
+        stmt = stmt.where(Task.assignee_id == assignee_id)
+    return list(db.scalars(stmt))
 
 
-def start_progress(db: Session, annotation: Annotation, actor: User) -> Annotation:
-    if annotation.assignee_id != actor.id:
+def _require_status(task: Task, expected: str) -> None:
+    if task.status != expected:
+        raise InvalidTransitionError(f"expected status {expected!r}, got {task.status!r}")
+
+
+def start_progress(db: Session, task: Task, actor: User) -> Task:
+    if task.assignee_id != actor.id:
         raise PermissionDeniedError("only the assignee can start progress on this task")
-    _require_status(annotation, TaskStatus.TODO)
-    annotation.status = TaskStatus.IN_PROGRESS
+    _require_status(task, TaskStatus.TODO)
+    task.status = TaskStatus.IN_PROGRESS
     db.commit()
-    db.refresh(annotation)
-    return annotation
+    db.refresh(task)
+    return task
 
 
-def submit_for_review(db: Session, annotation: Annotation, actor: User) -> Annotation:
-    if annotation.assignee_id != actor.id:
+def submit_for_review(db: Session, task: Task, actor: User) -> Task:
+    if task.assignee_id != actor.id:
         raise PermissionDeniedError("only the assignee can submit this task for review")
-    _require_status(annotation, TaskStatus.IN_PROGRESS)
-    annotation.status = TaskStatus.PENDING_REVIEW
+    _require_status(task, TaskStatus.IN_PROGRESS)
+    task.status = TaskStatus.PENDING_REVIEW
     db.commit()
-    db.refresh(annotation)
-    return annotation
+    db.refresh(task)
+    return task
 
 
-def _require_reviewer(annotation: Annotation, actor: User) -> None:
+def _require_reviewer(task: Task, actor: User) -> None:
     """The assigner is whoever created the task, or an admin acting on
     their behalf — the assignee can never review their own work."""
-    if actor.id == annotation.assignee_id:
+    if actor.id == task.assignee_id:
         raise PermissionDeniedError("the assignee cannot review their own task")
-    if annotation.creator_id != actor.id and actor.role != Role.ADMIN:
+    if task.creator_id != actor.id and actor.role != Role.ADMIN:
         raise PermissionDeniedError("only the task's creator (or an admin) can review it")
 
 
-def approve(db: Session, annotation: Annotation, actor: User) -> Annotation:
-    _require_reviewer(annotation, actor)
-    _require_status(annotation, TaskStatus.PENDING_REVIEW)
-    annotation.status = TaskStatus.DONE
-    annotation.reviewed_by_id = actor.id
-    annotation.reviewed_at = _now()
-    annotation.rejection_reason = None
+def approve(db: Session, task: Task, actor: User) -> Task:
+    _require_reviewer(task, actor)
+    _require_status(task, TaskStatus.PENDING_REVIEW)
+    task.status = TaskStatus.DONE
+    task.reviewed_by_id = actor.id
+    task.reviewed_at = _now()
+    task.rejection_reason = None
     db.commit()
-    db.refresh(annotation)
-    return annotation
+    db.refresh(task)
+    return task
 
 
-def reject(db: Session, annotation: Annotation, actor: User, reason: str) -> Annotation:
-    _require_reviewer(annotation, actor)
-    _require_status(annotation, TaskStatus.PENDING_REVIEW)
-    annotation.status = TaskStatus.IN_PROGRESS
-    annotation.reviewed_by_id = actor.id
-    annotation.reviewed_at = _now()
-    annotation.rejection_reason = reason
+def reject(db: Session, task: Task, actor: User, reason: str) -> Task:
+    _require_reviewer(task, actor)
+    _require_status(task, TaskStatus.PENDING_REVIEW)
+    task.status = TaskStatus.IN_PROGRESS
+    task.reviewed_by_id = actor.id
+    task.reviewed_at = _now()
+    task.rejection_reason = reason
     db.commit()
-    db.refresh(annotation)
-    return annotation
+    db.refresh(task)
+    return task
 
 
-def add_comment(db: Session, annotation: Annotation, author: User, body: str) -> AnnotationComment:
-    comment = AnnotationComment(annotation_id=annotation.id, author_id=author.id, body=body)
+def add_comment(db: Session, project: Project, author: User, body: str) -> ProjectComment:
+    comment = ProjectComment(project_id=project.id, author_id=author.id, body=body)
     db.add(comment)
     db.commit()
     db.refresh(comment)
     return comment
 
 
-def gantt_rows(db: Session, assignee_id: str | None = None) -> list[Annotation]:
+def gantt_rows(db: Session, assignee_id: str | None = None) -> list[Task]:
     """Simple due-date timeline, no dependency graph: each row is one
     task spanning created_at -> due_date for its assignee."""
-    stmt = select(Annotation).where(Annotation.assignee_id.is_not(None))
-    if assignee_id:
-        stmt = stmt.where(Annotation.assignee_id == assignee_id)
-    return list(db.scalars(stmt))
+    return list_tasks(db, assignee_id=assignee_id)

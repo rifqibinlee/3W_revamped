@@ -47,16 +47,35 @@ export interface TokenPair {
   token_type: string
 }
 
-export interface AnnotationOut {
+export interface ProjectOut {
   id: string
   creator_id: string
   title: string
   description: string | null
-  geometry: Record<string, unknown>
-  priority: string | null
   assignee_id: string | null
-  due_date: string | null
-  status: string | null
+  conversation_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AnnotationOut {
+  id: string
+  project_id: string
+  creator_id: string
+  label: string | null
+  geometry: Record<string, unknown>
+  created_at: string
+}
+
+export interface TaskOut {
+  id: string
+  project_id: string
+  creator_id: string
+  title: string
+  description: string | null
+  assignee_id: string
+  due_date: string
+  status: string
   reviewed_by_id: string | null
   reviewed_at: string | null
   rejection_reason: string | null
@@ -150,7 +169,7 @@ export const api = {
 
   listUsers: () => request<UserOut[]>('/auth/users'),
 
-  ganttRows: () => request<AnnotationOut[]>('/annotations/gantt/rows'),
+  ganttRows: () => request<TaskOut[]>('/tasks/gantt/rows'),
 
   currentStatus: () => request<CurrentStatusRow[]>('/analytics/current-status'),
 
@@ -167,27 +186,41 @@ export const api = {
   forecastTable: (filters: AnalyticsFilters = {}) =>
     request<ForecastRow[]>(`/analytics/forecast-table${filterParams(filters)}`),
 
-  createAnnotation: (input: {
-    title: string
-    geometry: Record<string, unknown>
-    description?: string
-    priority?: string
-    assignee_id?: string
-    due_date?: string
-  }) => request<AnnotationOut>('/annotations', { method: 'POST', body: JSON.stringify(input) }),
+  createProject: (input: { title: string; description?: string; assignee_id?: string }) =>
+    request<ProjectOut>('/projects', { method: 'POST', body: JSON.stringify(input) }),
 
-  assignTask: (id: string, assignee_id: string, due_date: string) =>
-    request<AnnotationOut>(`/annotations/${id}/assign`, {
+  listProjects: () => request<ProjectOut[]>('/projects'),
+
+  getProject: (id: string) => request<ProjectOut>(`/projects/${id}`),
+
+  assignProject: (id: string, assignee_id: string) =>
+    request<ProjectOut>(`/projects/${id}/assign`, { method: 'POST', body: JSON.stringify({ assignee_id }) }),
+
+  addAnnotation: (projectId: string, geometry: Record<string, unknown>, label?: string) =>
+    request<AnnotationOut>(`/projects/${projectId}/annotations`, {
       method: 'POST',
-      body: JSON.stringify({ assignee_id, due_date }),
+      body: JSON.stringify({ geometry, label }),
     }),
 
-  startTask: (id: string) => request<AnnotationOut>(`/annotations/${id}/start`, { method: 'POST' }),
+  listAnnotations: (projectId: string) => request<AnnotationOut[]>(`/projects/${projectId}/annotations`),
 
-  submitTask: (id: string) => request<AnnotationOut>(`/annotations/${id}/submit`, { method: 'POST' }),
+  createTask: (
+    projectId: string,
+    input: { title: string; assignee_id: string; due_date: string; description?: string },
+  ) => request<TaskOut>(`/projects/${projectId}/tasks`, { method: 'POST', body: JSON.stringify(input) }),
 
-  approveTask: (id: string) => request<AnnotationOut>(`/annotations/${id}/approve`, { method: 'POST' }),
+  startTask: (id: string) => request<TaskOut>(`/tasks/${id}/start`, { method: 'POST' }),
+
+  submitTask: (id: string) => request<TaskOut>(`/tasks/${id}/submit`, { method: 'POST' }),
+
+  approveTask: (id: string) => request<TaskOut>(`/tasks/${id}/approve`, { method: 'POST' }),
 
   rejectTask: (id: string, reason: string) =>
-    request<AnnotationOut>(`/annotations/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) }),
+    request<TaskOut>(`/tasks/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) }),
+
+  addProjectComment: (projectId: string, body: string) =>
+    request<{ id: string; body: string }>(`/projects/${projectId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ body }),
+    }),
 }
