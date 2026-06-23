@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     jwt_secret: str
     duckdb_path: str = "./data/analytics.duckdb"
     parquet_dir: str = "./data/parquet"
+    raw_data_dir: str = "./data/raw"
 
     # Vite picks a free port if its default is taken, so this covers the
     # common local-dev range rather than hardcoding one port.

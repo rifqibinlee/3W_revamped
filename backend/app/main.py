@@ -7,6 +7,7 @@ from app.annotations.router import router as annotations_router
 from app.auth.router import router as auth_router
 from app.chat.router import router as chat_router
 from app.core.config import settings
+from app.datamgmt.router import router as datamgmt_router
 from app.pricing.router import router as pricing_router
 from app.rag.router import router as rag_router
 from app.reviews.router import router as reviews_router
@@ -29,6 +30,7 @@ app.include_router(analytics_router)
 app.include_router(siteplanning_router)
 app.include_router(agent_router)
 app.include_router(rag_router)
+app.include_router(datamgmt_router)
 
 
 @app.get("/health")

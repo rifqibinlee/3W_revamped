@@ -13,9 +13,12 @@ const NAV_ITEMS = [
   { to: '/agent', label: 'Agent' },
 ]
 
+const ADMIN_NAV_ITEMS = [{ to: '/data', label: 'Data' }]
+
 export function AppShell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth()
   const initials = user?.username.slice(0, 2).toUpperCase() ?? '--'
+  const navItems = user?.role === 'admin' ? [...NAV_ITEMS, ...ADMIN_NAV_ITEMS] : NAV_ITEMS
 
   return (
     <div className="relative min-h-screen">
@@ -29,7 +32,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <span className="font-display text-base font-semibold">3W ops</span>
           </div>
           <nav className="flex items-center gap-6 text-sm text-white/75">
-            {NAV_ITEMS.map((item) => (
+            {navItems.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}

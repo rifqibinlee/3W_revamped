@@ -16,8 +16,11 @@ import {
 } from '../lib/api'
 
 const STYLE_URL = 'https://demotiles.maplibre.org/style.json'
-const DEFAULT_CENTER: [number, number] = [101.5, 3.1]
-const DEFAULT_ZOOM = 11
+// Centered on the real site distribution across Peninsular Malaysia
+// (lat 1.3-6.2, lng 101.6-104.3), not just the Klang Valley — zoom 7
+// keeps the whole network visible by default instead of an empty patch.
+const DEFAULT_CENTER: [number, number] = [102.9, 3.15]
+const DEFAULT_ZOOM = 7
 
 type DrawTool = 'none' | 'point' | 'line' | 'polygon' | 'buffer'
 type AnnotationMode = 'note' | 'project'

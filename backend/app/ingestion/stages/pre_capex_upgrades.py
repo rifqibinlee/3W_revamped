@@ -23,17 +23,34 @@ capacity, used as the baseline subtracted from demand) always comes from
 cell_reference, never from the raw file.
 """
 
+import csv
 import re
 import tempfile
 from pathlib import Path
 
 import pandas as pd
+import pyxlsb
 
 from app.analytics.db import get_connection
 from app.core.config import settings
 from app.ingestion import parquet_safe
 
 OUTPUT_TABLE = "pre_capex_upgrades"
+
+# Keywords for the columns this stage actually reads (see _detect_column
+# calls below) — used to filter columns at read time so large weekly xlsb
+# files (95-115MB) don't get fully materialized into a pandas DataFrame
+# with every vendor column. Loading a full sheet via pd.ExcelFile.parse()
+# routinely hit MemoryError on these files; xc_huawei already avoids this
+# by streaming+filtering through pyxlsb directly (_xlsb_to_filtered_csv) —
+# same pattern applied here.
+_KEEP_KEYWORD_GROUPS = (
+    ("cell", "name"),
+    ("bw",),
+    ("bh", "rb", "util"),
+    ("eric_prb", "utilzation"),
+    ("user", "count"),
+)
 
 
 def _detect_column(columns: list[str], must_contain_all: tuple[str, ...]) -> str | None:
@@ -44,12 +61,63 @@ def _detect_column(columns: list[str], must_contain_all: tuple[str, ...]) -> str
     return None
 
 
+def _clean_header(raw: str) -> str:
+    return str(raw).lower().strip().replace(" ", "_")
+
+
+def _xlsb_sheet_to_filtered_csv(path: str, sheet_name: str) -> str | None:
+    """Streams one xlsb sheet to a temp CSV, keeping only columns that match
+    one of _KEEP_KEYWORD_GROUPS — mirrors xc_huawei._xlsb_to_filtered_csv's
+    column-filtering streaming approach instead of loading the whole sheet
+    into a pandas DataFrame (which OOMs on these ~100MB weekly files)."""
+    tmp = tempfile.NamedTemporaryFile(suffix=".csv", delete=False, mode="w", newline="", encoding="utf-8")
+    wrote_any_row = False
+    with pyxlsb.open_workbook(path) as wb, wb.get_sheet(sheet_name) as sheet:
+        writer = csv.writer(tmp)
+        header_indices: list[int] = []
+        for r_idx, row in enumerate(sheet.rows()):
+            cells = [c.v for c in row]
+            if r_idx == 0:
+                ordered_headers = []
+                for c_idx, val in enumerate(cells):
+                    if val is None:
+                        continue
+                    clean_col = _clean_header(val)
+                    if any(all(k in clean_col for k in group) for group in _KEEP_KEYWORD_GROUPS):
+                        header_indices.append(c_idx)
+                        ordered_headers.append(clean_col)
+                if not ordered_headers:
+                    break
+                writer.writerow(ordered_headers)
+            else:
+                if not any(cells):
+                    continue
+                writer.writerow([cells[i] if i < len(cells) else None for i in header_indices])
+                wrote_any_row = True
+    tmp.close()
+    if not wrote_any_row:
+        Path(tmp.name).unlink(missing_ok=True)
+        return None
+    return tmp.name
+
+
 def _excel_sheets_to_parquet(path: str) -> list[str]:
-    """xlsb/xlsx aren't handled by read_csv/read_parquet — converts each
-    sheet to a temp Parquet, matching the legacy script's per-sheet
-    'pd.ExcelFile(...).sheet_names' loop for this exact stage."""
-    engine = "pyxlsb" if path.lower().endswith(".xlsb") else None
-    xls = pd.ExcelFile(path, engine=engine)
+    """xlsb/xlsx aren't handled by read_csv/read_parquet directly. For xlsb,
+    streams+filters each sheet to CSV via pyxlsb (see
+    _xlsb_sheet_to_filtered_csv) to avoid materializing the full ~100MB
+    sheet in memory; for xlsx (much smaller in this dataset), keeps the
+    original per-sheet pandas conversion."""
+    if path.lower().endswith(".xlsb"):
+        with pyxlsb.open_workbook(path) as wb:
+            sheet_names = list(wb.sheets)
+        out_paths = []
+        for sheet_name in sheet_names:
+            csv_path = _xlsb_sheet_to_filtered_csv(path, sheet_name)
+            if csv_path:
+                out_paths.append(csv_path)
+        return out_paths
+
+    xls = pd.ExcelFile(path)
     out_paths = []
     for sheet in xls.sheet_names:
         df = xls.parse(sheet_name=sheet)

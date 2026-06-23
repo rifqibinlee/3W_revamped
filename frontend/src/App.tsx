@@ -5,6 +5,7 @@ import { useAuth } from './lib/useAuth'
 import { Agent } from './pages/Agent'
 import { Chat } from './pages/Chat'
 import { Dashboard } from './pages/Dashboard'
+import { DataManagement } from './pages/DataManagement'
 import { Login } from './pages/Login'
 import { MapPage } from './pages/Map'
 import { Notes } from './pages/Notes'
@@ -15,6 +16,14 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   if (loading) return null
   if (!user) return <Navigate to="/login" replace />
+  return <AppShell>{children}</AppShell>
+}
+
+function AdminRoute({ children }: { children: ReactNode }) {
+  const { user, loading } = useAuth()
+  if (loading) return null
+  if (!user) return <Navigate to="/login" replace />
+  if (user.role !== 'admin') return <Navigate to="/" replace />
   return <AppShell>{children}</AppShell>
 }
 
@@ -76,6 +85,14 @@ export default function App() {
           <ProtectedRoute>
             <Agent />
           </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/data"
+        element={
+          <AdminRoute>
+            <DataManagement />
+          </AdminRoute>
         }
       />
     </Routes>

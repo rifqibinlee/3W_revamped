@@ -33,6 +33,22 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>
 }
 
+async function uploadFile<T>(path: string, file: File): Promise<T> {
+  const token = getToken()
+  const headers = new Headers()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const formData = new FormData()
+  formData.set('file', file)
+
+  const response = await fetch(`${API_BASE_URL}${path}`, { method: 'POST', headers, body: formData })
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ detail: response.statusText }))
+    throw new ApiError(response.status, body.detail ?? 'Upload failed')
+  }
+  return response.json() as Promise<T>
+}
+
 export interface UserOut {
   id: string
   username: string
@@ -45,6 +61,30 @@ export interface TokenPair {
   access_token: string
   refresh_token: string
   token_type: string
+}
+
+export interface DataCategory {
+  key: string
+  label: string
+  weekly: boolean
+  file_count: number
+}
+
+export interface DataFile {
+  filename: string
+  size_bytes: number
+  modified_at: string
+}
+
+export interface DataFilePreview {
+  columns: string[]
+  rows: (string | number | boolean | null)[][]
+  truncated: boolean
+}
+
+export interface PipelineRunResult {
+  stages_run: string[]
+  stages_skipped: string[]
 }
 
 export interface ConversationOut {
@@ -348,4 +388,31 @@ export const api = {
 
   agentChat: (message: string) =>
     request<{ reply: string }>('/agent/chat', { method: 'POST', body: JSON.stringify({ message }) }),
+
+  listDataCategories: () => request<DataCategory[]>('/data-management/categories'),
+
+  listDataWeeks: (category: string) => request<string[]>(`/data-management/categories/${category}/weeks`),
+
+  listDataFiles: (category: string, week?: string) =>
+    request<DataFile[]>(`/data-management/categories/${category}/files${week ? `?week=${week}` : ''}`),
+
+  uploadDataFile: (category: string, file: File, week?: string) =>
+    uploadFile<{ filename: string; status: string }>(
+      `/data-management/categories/${category}/files${week ? `?week=${week}` : ''}`,
+      file,
+    ),
+
+  deleteDataFile: (category: string, filename: string, week?: string) =>
+    request<void>(
+      `/data-management/categories/${category}/files/${encodeURIComponent(filename)}${week ? `?week=${week}` : ''}`,
+      { method: 'DELETE' },
+    ),
+
+  previewDataFile: (category: string, filename: string, week?: string) =>
+    request<DataFilePreview>(
+      `/data-management/categories/${category}/files/${encodeURIComponent(filename)}/preview${week ? `?week=${week}` : ''}`,
+    ),
+
+  runDataPipeline: (sync = true) =>
+    request<PipelineRunResult>(`/data-management/run-pipeline?sync=${sync}`, { method: 'POST' }),
 }

@@ -1,3 +1,16 @@
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_parquet_dir(tmp_path, monkeypatch):
+    """These tests assert on an empty-data baseline, so they must not see
+    whatever real parquet files happen to exist at the default location
+    (e.g. after a real ETL run) — same isolation every other analytics
+    test file already does via monkeypatch + tmp_path."""
+    monkeypatch.setattr("app.analytics.service.settings.parquet_dir", str(tmp_path))
+    monkeypatch.setattr("app.analytics.service.settings.duckdb_path", str(tmp_path / "test.duckdb"))
+
+
 def test_current_status_endpoint_returns_empty_list_with_no_data(client) -> None:
     resp = client.get("/analytics/current-status")
     assert resp.status_code == 200
