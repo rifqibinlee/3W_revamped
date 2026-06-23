@@ -17,6 +17,14 @@ from app.core.db import get_db
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
+@router.get("/conversations", response_model=list[ConversationOut])
+def list_conversations(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[Conversation]:
+    conversations = service.list_my_conversations(db, user.id)
+    for c in conversations:
+        c.participant_ids = service.conversation_participant_ids(db, c.id)  # type: ignore[attr-defined]
+    return conversations
+
+
 @router.post("/conversations/direct", response_model=ConversationOut, status_code=status.HTTP_201_CREATED)
 def create_direct(payload: DirectConversationCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> Conversation:
     return service.get_or_create_direct_conversation(db, user.id, payload.other_user_id)

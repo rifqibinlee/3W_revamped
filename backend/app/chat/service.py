@@ -61,6 +61,34 @@ def create_group_conversation(db: Session, title: str, participant_ids: list[str
     return conversation
 
 
+def list_my_conversations(db: Session, user_id: str) -> list[Conversation]:
+    """Conversations the user participates in, most-recently-active first
+    (by last message, falling back to creation time for empty ones)."""
+    conversation_ids = list(
+        db.scalars(select(ConversationParticipant.conversation_id).where(ConversationParticipant.user_id == user_id))
+    )
+    if not conversation_ids:
+        return []
+    conversations = list(db.scalars(select(Conversation).where(Conversation.id.in_(conversation_ids))))
+
+    last_message_at: dict[str, object] = {}
+    for conversation_id in conversation_ids:
+        last = db.scalar(
+            select(Message.created_at)
+            .where(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at.desc())
+            .limit(1)
+        )
+        last_message_at[conversation_id] = last
+
+    conversations.sort(key=lambda c: last_message_at.get(c.id) or c.created_at, reverse=True)
+    return conversations
+
+
+def conversation_participant_ids(db: Session, conversation_id: str) -> list[str]:
+    return list(_participant_ids(db, conversation_id))
+
+
 def send_message(db: Session, conversation_id: str, sender_id: str, body: str) -> Message:
     _require_participant(db, conversation_id, sender_id)
     message = Message(conversation_id=conversation_id, sender_id=sender_id, body=body)

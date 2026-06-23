@@ -21,6 +21,7 @@ class ConversationOut(BaseModel):
     is_group: bool
     title: str | None
     created_at: datetime
+    participant_ids: list[str] = []
 
     model_config = {"from_attributes": True}
 

@@ -36,3 +36,24 @@ def test_non_participant_blocked_via_api(client) -> None:
 
     resp = client.get(f"/chat/conversations/{conv_id}/messages", headers=eve_headers)
     assert resp.status_code == 403
+
+
+def test_list_conversations_via_api(client) -> None:
+    alice_headers = _register_and_login(client, "alice3_chat_api")
+    bob_headers = _register_and_login(client, "bob3_chat_api")
+    eve_headers = _register_and_login(client, "eve3_chat_api")
+    bob_id = client.get("/auth/me", headers=bob_headers).json()["id"]
+    alice_id = client.get("/auth/me", headers=alice_headers).json()["id"]
+
+    conv_resp = client.post("/chat/conversations/direct", json={"other_user_id": bob_id}, headers=alice_headers)
+    conv_id = conv_resp.json()["id"]
+
+    resp = client.get("/chat/conversations", headers=alice_headers)
+    assert resp.status_code == 200
+    convs = resp.json()
+    assert len(convs) == 1
+    assert convs[0]["id"] == conv_id
+    assert set(convs[0]["participant_ids"]) == {alice_id, bob_id}
+
+    eve_resp = client.get("/chat/conversations", headers=eve_headers)
+    assert eve_resp.json() == []

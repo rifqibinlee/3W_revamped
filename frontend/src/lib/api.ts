@@ -47,6 +47,22 @@ export interface TokenPair {
   token_type: string
 }
 
+export interface ConversationOut {
+  id: string
+  is_group: boolean
+  title: string | null
+  created_at: string
+  participant_ids: string[]
+}
+
+export interface MessageOut {
+  id: string
+  conversation_id: string
+  sender_id: string
+  body: string
+  created_at: string
+}
+
 export interface ProjectOut {
   id: string
   creator_id: string
@@ -307,4 +323,29 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(input),
     }),
+
+  listConversations: () => request<ConversationOut[]>('/chat/conversations'),
+
+  createDirectConversation: (otherUserId: string) =>
+    request<ConversationOut>('/chat/conversations/direct', {
+      method: 'POST',
+      body: JSON.stringify({ other_user_id: otherUserId }),
+    }),
+
+  createGroupConversation: (title: string, participantIds: string[]) =>
+    request<ConversationOut>('/chat/conversations/group', {
+      method: 'POST',
+      body: JSON.stringify({ title, participant_ids: participantIds }),
+    }),
+
+  listMessages: (conversationId: string) => request<MessageOut[]>(`/chat/conversations/${conversationId}/messages`),
+
+  sendMessage: (conversationId: string, body: string) =>
+    request<MessageOut>(`/chat/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ body }),
+    }),
+
+  agentChat: (message: string) =>
+    request<{ reply: string }>('/agent/chat', { method: 'POST', body: JSON.stringify({ message }) }),
 }

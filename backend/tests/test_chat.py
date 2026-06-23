@@ -95,3 +95,36 @@ def test_mark_read_is_idempotent(db_session) -> None:
     read1 = service.mark_read(db_session, msg.id, bob.id)
     read2 = service.mark_read(db_session, msg.id, bob.id)
     assert read1.id == read2.id
+
+
+def test_list_my_conversations_excludes_others(db_session) -> None:
+    alice = _user(db_session, "alice8_chat")
+    bob = _user(db_session, "bob8_chat")
+    eve = _user(db_session, "eve8_chat")
+    conv_ab = service.get_or_create_direct_conversation(db_session, alice.id, bob.id)
+    service.get_or_create_direct_conversation(db_session, bob.id, eve.id)
+
+    conversations = service.list_my_conversations(db_session, alice.id)
+    assert [c.id for c in conversations] == [conv_ab.id]
+
+
+def test_list_my_conversations_orders_by_latest_message(db_session) -> None:
+    alice = _user(db_session, "alice9_chat")
+    bob = _user(db_session, "bob9_chat")
+    carol = _user(db_session, "carol9_chat")
+    conv_ab = service.get_or_create_direct_conversation(db_session, alice.id, bob.id)
+    conv_ac = service.get_or_create_direct_conversation(db_session, alice.id, carol.id)
+
+    service.send_message(db_session, conv_ab.id, alice.id, "first conversation, older")
+    service.send_message(db_session, conv_ac.id, alice.id, "second conversation, newer")
+
+    conversations = service.list_my_conversations(db_session, alice.id)
+    assert [c.id for c in conversations] == [conv_ac.id, conv_ab.id]
+
+
+def test_conversation_participant_ids(db_session) -> None:
+    alice = _user(db_session, "alice10_chat")
+    bob = _user(db_session, "bob10_chat")
+    conv = service.get_or_create_direct_conversation(db_session, alice.id, bob.id)
+
+    assert set(service.conversation_participant_ids(db_session, conv.id)) == {alice.id, bob.id}
