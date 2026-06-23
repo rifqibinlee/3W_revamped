@@ -236,3 +236,126 @@ def test_filter_options_lists_distinct_values(tmp_path, monkeypatch) -> None:
     assert options["operators"] == ["Celcom", "Digi"]
     assert options["weeks"] == [10, 11]
     assert options["years"] == [2026]
+
+
+def test_map_stats_returns_empty_when_no_data(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    stats = service.map_stats(south=0, west=100, north=5, east=102)
+    assert stats == {
+        "total_sites": 0, "congested_sites": 0, "healthy_sites": 0,
+        "coverage_holes": 0, "worst_coverage_hole": None, "total_capex": 0.0,
+    }
+
+
+def test_map_stats_scopes_to_bounds(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_parquet(
+        tmp_path / "site_coordinates.parquet",
+        [
+            ("SITE001", "Central", "C1", 3.1, 101.6),   # inside bbox
+            ("SITE002", "Central", "C1", 3.2, 101.7),   # inside bbox
+            ("SITE003", "Southern", "C2", 10.0, 110.0),  # outside bbox
+        ],
+        ("site_id", "region", "cluster", "latitude", "longitude"),
+    )
+    _write_congestion_fixture(tmp_path, [
+        ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 10.0, 10, 2026),
+        ("SITE002", "SITE002_Macro_1", "Central", "C1", "Celcom", False, 10.0, 10, 2026),
+        ("SITE003", "SITE003_Macro_1", "Southern", "C2", "Celcom", True, 10.0, 10, 2026),
+    ])
+    _write_parquet(
+        tmp_path / "capex_upgrades_pre_capex.parquet",
+        [
+            ("SITE001_Macro_1", "Case 3", 50000.0),
+            ("SITE003_Macro_1", "Case 5", 99999.0),  # outside bbox, should be excluded
+        ],
+        ("zoom_sector_id", "suggested_upgrade_case", "estimated_total_capex_rm"),
+    )
+
+    stats = service.map_stats(south=3.0, west=101.0, north=3.5, east=102.0)
+    assert stats["total_sites"] == 2
+    assert stats["congested_sites"] == 1
+    assert stats["healthy_sites"] == 1
+    assert stats["total_capex"] == 50000.0
+
+
+def test_map_stats_forecast_mode_uses_forecast_results(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_parquet(
+        tmp_path / "site_coordinates.parquet",
+        [("SITE001", "Central", "C1", 3.1, 101.6)],
+        ("site_id", "region", "cluster", "latitude", "longitude"),
+    )
+    _write_parquet(
+        tmp_path / "forecast_results.parquet",
+        [("SITE001_Macro_1", True, "Central", 13, 2026)],
+        ("zoom_sector_id", "congested", "region", "week", "year"),
+    )
+
+    stats = service.map_stats(south=3.0, west=101.0, north=3.5, east=102.0, year=2026, week=13)
+    assert stats["total_sites"] == 1
+    assert stats["congested_sites"] == 1
+
+
+def test_map_stats_worst_coverage_hole_within_bounds(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_parquet(
+        tmp_path / "site_coordinates.parquet",
+        [("SITE001", "Central", "C1", 3.1, 101.6)],
+        ("site_id", "region", "cluster", "latitude", "longitude"),
+    )
+    _write_parquet(
+        tmp_path / "coverage_holes.parquet",
+        [
+            (3.10, 101.60, -115.0, "CELL_A", "MR", 0),
+            (3.11, 101.61, -116.0, "CELL_A", "MR", 0),
+            (3.12, 101.62, -117.0, "CELL_A", "MR", 0),
+            (3.13, 101.63, -112.0, "CELL_B", "Ookla", 1),
+            (10.0, 110.0, -118.0, "CELL_C", "MR", 2),  # outside bbox
+        ],
+        ("latitude", "longitude", "signal_strength", "serving_cell", "data_source", "cluster_id"),
+    )
+
+    stats = service.map_stats(south=3.0, west=101.0, north=3.5, east=102.0)
+    assert stats["coverage_holes"] == 2
+    assert stats["worst_coverage_hole"]["cluster_id"] == 0
+    assert stats["worst_coverage_hole"]["point_count"] == 3
+    assert stats["worst_coverage_hole"]["data_source"] == "MR"
+
+
+def test_overview_stats_returns_empty_when_no_data(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    stats = service.overview_stats()
+    assert stats == {
+        "total_sites": 0, "total_congested_sites": 0, "total_capex": 0.0,
+        "worst_ookla_cluster": None, "worst_mr_cluster": None,
+    }
+
+
+def test_overview_stats_aggregates_network_wide(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_congestion_fixture(tmp_path, [
+        ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 10.0, 10, 2026),
+        ("SITE002", "SITE002_Macro_1", "Southern", "C2", "Digi", False, 20.0, 10, 2026),
+    ])
+    _write_parquet(
+        tmp_path / "capex_upgrades_pre_capex.parquet",
+        [("SITE001_Macro_1", "Case 3", 50000.0)],
+        ("zoom_sector_id", "suggested_upgrade_case", "estimated_total_capex_rm"),
+    )
+    _write_parquet(
+        tmp_path / "coverage_holes.parquet",
+        [
+            (3.10, 101.60, -115.0, "CELL_A", "Ookla", 0),
+            (3.11, 101.61, -116.0, "CELL_A", "Ookla", 0),
+            (3.50, 102.00, -112.0, "CELL_B", "MR", 5),
+        ],
+        ("latitude", "longitude", "signal_strength", "serving_cell", "data_source", "cluster_id"),
+    )
+
+    stats = service.overview_stats()
+    assert stats["total_sites"] == 2
+    assert stats["total_congested_sites"] == 1
+    assert stats["total_capex"] == 50000.0
+    assert stats["worst_ookla_cluster"] == {"cluster_id": 0, "data_source": "Ookla", "point_count": 2, "avg_signal": -115.5}
+    assert stats["worst_mr_cluster"] == {"cluster_id": 5, "data_source": "MR", "point_count": 1, "avg_signal": -112.0}

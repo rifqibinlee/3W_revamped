@@ -278,6 +278,194 @@ def site_detail(site_id: str) -> dict:
         con.close()
 
 
+def _capex_glob() -> str:
+    return str(Path(settings.parquet_dir) / "capex_upgrades_*.parquet")
+
+
+def _capex_files() -> list[Path]:
+    if not Path(settings.parquet_dir).exists():
+        return []
+    return list(Path(settings.parquet_dir).glob("capex_upgrades_*.parquet"))
+
+
+_EMPTY_MAP_STATS = {
+    "total_sites": 0, "congested_sites": 0, "healthy_sites": 0,
+    "coverage_holes": 0, "worst_coverage_hole": None, "total_capex": 0.0,
+}
+
+
+def map_stats(
+    south: float, west: float, north: float, east: float,
+    year: int | None = None, week: int | None = None,
+) -> dict:
+    """Stats scoped to the map's current viewport — the bbox the user is
+    actually looking at, not the whole network. Forecast mode (year+week
+    given) swaps the congestion source to forecast_results, matching the
+    split-screen's right pane."""
+    sites_path = _parquet_path("site_coordinates")
+    congestion_path = _parquet_path("congestion_analysis")
+    forecast_path = _parquet_path("forecast_results")
+    holes_path = _parquet_path("coverage_holes")
+    capex_files = _capex_files()
+
+    if not sites_path.exists():
+        return dict(_EMPTY_MAP_STATS)
+
+    con = get_connection()
+    try:
+        bbox_clause = "s.longitude BETWEEN ? AND ? AND s.latitude BETWEEN ? AND ?"
+        bbox_params = [west, east, south, north]
+
+        total_sites = congested_sites = healthy_sites = 0
+        if year is not None and week is not None and forecast_path.exists():
+            row = con.execute(
+                f"""
+                WITH per_site AS (
+                    SELECT s.site_id, bool_or(f.congested) AS congested
+                    FROM read_parquet('{sites_path}') s
+                    JOIN read_parquet('{forecast_path}') f
+                        ON split_part(f.zoom_sector_id, '_', 1) = s.site_id
+                    WHERE f.year = ? AND f.week = ? AND {bbox_clause}
+                    GROUP BY s.site_id
+                )
+                SELECT count(*), count(*) FILTER (WHERE congested) FROM per_site
+                """,
+                [year, week] + bbox_params,
+            ).fetchone()
+            total_sites, congested_sites = row[0] or 0, row[1] or 0
+        elif congestion_path.exists():
+            row = con.execute(
+                f"""
+                WITH latest AS (
+                    SELECT *, row_number() OVER (
+                        PARTITION BY zoom_sector_id ORDER BY year DESC, week DESC
+                    ) AS rn FROM read_parquet('{congestion_path}')
+                ),
+                per_site AS (
+                    SELECT s.site_id, bool_or(c.congested) AS congested
+                    FROM read_parquet('{sites_path}') s
+                    JOIN latest c ON c.rn = 1 AND c.site_id = s.site_id
+                    WHERE {bbox_clause}
+                    GROUP BY s.site_id
+                )
+                SELECT count(*), count(*) FILTER (WHERE congested) FROM per_site
+                """,
+                bbox_params,
+            ).fetchone()
+            total_sites, congested_sites = row[0] or 0, row[1] or 0
+        healthy_sites = total_sites - congested_sites
+
+        coverage_holes = 0
+        worst_hole = None
+        if holes_path.exists():
+            top = con.execute(
+                f"""
+                SELECT cluster_id, data_source, count(*) AS point_count, avg(signal_strength) AS avg_signal
+                FROM read_parquet('{holes_path}')
+                WHERE cluster_id != -1 AND longitude BETWEEN ? AND ? AND latitude BETWEEN ? AND ?
+                GROUP BY cluster_id, data_source
+                ORDER BY point_count DESC
+                LIMIT 1
+                """,
+                bbox_params,
+            ).fetchone()
+            count_row = con.execute(
+                f"""
+                SELECT count(DISTINCT cluster_id) FROM read_parquet('{holes_path}')
+                WHERE cluster_id != -1 AND longitude BETWEEN ? AND ? AND latitude BETWEEN ? AND ?
+                """,
+                bbox_params,
+            ).fetchone()
+            coverage_holes = count_row[0] or 0
+            if top:
+                worst_hole = {
+                    "cluster_id": top[0], "data_source": top[1],
+                    "point_count": top[2], "avg_signal": round(top[3], 1) if top[3] is not None else None,
+                }
+
+        total_capex = 0.0
+        if capex_files:
+            row = con.execute(
+                f"""
+                SELECT sum(cu.estimated_total_capex_rm)
+                FROM read_parquet('{_capex_glob()}') cu
+                JOIN read_parquet('{sites_path}') s ON split_part(cu.zoom_sector_id, '_', 1) = s.site_id
+                WHERE {bbox_clause}
+                """,
+                bbox_params,
+            ).fetchone()
+            total_capex = round(row[0], 2) if row and row[0] is not None else 0.0
+
+        return {
+            "total_sites": total_sites, "congested_sites": congested_sites, "healthy_sites": healthy_sites,
+            "coverage_holes": coverage_holes, "worst_coverage_hole": worst_hole, "total_capex": total_capex,
+        }
+    finally:
+        con.close()
+
+
+def overview_stats() -> dict:
+    """Network-wide stats, not scoped to the viewport — the panel above
+    the bounds-scoped tab."""
+    congestion_path = _parquet_path("congestion_analysis")
+    holes_path = _parquet_path("coverage_holes")
+    capex_files = _capex_files()
+
+    if not congestion_path.exists() and not holes_path.exists() and not capex_files:
+        return {
+            "total_sites": 0, "total_congested_sites": 0, "total_capex": 0.0,
+            "worst_ookla_cluster": None, "worst_mr_cluster": None,
+        }
+
+    con = get_connection()
+    try:
+        total_sites = total_congested = 0
+        if congestion_path.exists():
+            row = con.execute(f"""
+                WITH latest AS (
+                    SELECT *, row_number() OVER (
+                        PARTITION BY zoom_sector_id ORDER BY year DESC, week DESC
+                    ) AS rn FROM read_parquet('{congestion_path}')
+                )
+                SELECT count(DISTINCT site_id), count(DISTINCT CASE WHEN congested THEN site_id END)
+                FROM latest WHERE rn = 1
+            """).fetchone()
+            total_sites, total_congested = row[0] or 0, row[1] or 0
+
+        total_capex = 0.0
+        if capex_files:
+            row = con.execute(f"SELECT sum(estimated_total_capex_rm) FROM read_parquet('{_capex_glob()}')").fetchone()
+            total_capex = round(row[0], 2) if row and row[0] is not None else 0.0
+
+        def worst_cluster(source: str) -> dict | None:
+            if not holes_path.exists():
+                return None
+            top = con.execute(
+                f"""
+                SELECT cluster_id, count(*) AS point_count, avg(signal_strength) AS avg_signal
+                FROM read_parquet('{holes_path}')
+                WHERE data_source = ? AND cluster_id != -1
+                GROUP BY cluster_id
+                ORDER BY point_count DESC
+                LIMIT 1
+                """,
+                [source],
+            ).fetchone()
+            if not top:
+                return None
+            return {
+                "cluster_id": top[0], "data_source": source,
+                "point_count": top[1], "avg_signal": round(top[2], 1) if top[2] is not None else None,
+            }
+
+        return {
+            "total_sites": total_sites, "total_congested_sites": total_congested, "total_capex": total_capex,
+            "worst_ookla_cluster": worst_cluster("Ookla"), "worst_mr_cluster": worst_cluster("MR"),
+        }
+    finally:
+        con.close()
+
+
 def filter_options() -> dict:
     """Populates the filter bar's dropdowns from whatever data actually
     exists, rather than a hardcoded list — matches the legacy UI's

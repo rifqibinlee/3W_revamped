@@ -3,7 +3,17 @@ import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { GlassPanel } from '../components/GlassPanel'
-import { api, ApiError, type AnnotationOut, type CurrentStatusRow, type SiteDetail, type UserOut } from '../lib/api'
+import {
+  api,
+  ApiError,
+  type AnnotationOut,
+  type CurrentStatusRow,
+  type MapBounds,
+  type MapStats,
+  type OverviewStats,
+  type SiteDetail,
+  type UserOut,
+} from '../lib/api'
 
 const STYLE_URL = 'https://demotiles.maplibre.org/style.json'
 const DEFAULT_CENTER: [number, number] = [101.5, 3.1]
@@ -85,6 +95,15 @@ function circlePolygon(center: [number, number], radiusMeters: number): Polygon 
 
 function fmt(n: number | null | undefined, digits = 1): string {
   return n == null || Number.isNaN(n) ? '—' : n.toFixed(digits)
+}
+
+function fmtCurrency(n: number | null | undefined): string {
+  return n == null ? '—' : `RM ${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+}
+
+function readBounds(map: maplibregl.Map): MapBounds {
+  const b = map.getBounds()
+  return { south: b.getSouth(), west: b.getWest(), north: b.getNorth(), east: b.getEast() }
 }
 
 function siteDetailHtml(siteId: string, detail: SiteDetail | null, loading: boolean): string {
@@ -240,6 +259,48 @@ function addAnnotationsLayer(map: maplibregl.Map, annotations: AnnotationOut[]) 
   }
 }
 
+function MapStatsPanel({ title, stats }: { title: string; stats: MapStats | null }) {
+  return (
+    <GlassPanel>
+      <p className="mb-3.5 font-display text-sm font-semibold">{title}</p>
+      {!stats ? (
+        <p className="text-sm text-white/50">Pan or zoom the map to see stats for this area.</p>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-white/45">Sites</p>
+            <p className="font-display text-lg font-semibold">{stats.total_sites}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-white/45">Congested</p>
+            <p className="font-display text-lg font-semibold text-red-300">{stats.congested_sites}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-white/45">Healthy</p>
+            <p className="font-display text-lg font-semibold text-green-300">{stats.healthy_sites}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-white/45">Coverage holes</p>
+            <p className="font-display text-lg font-semibold">{stats.coverage_holes}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-white/45">CAPEX needed</p>
+            <p className="font-display text-lg font-semibold">{fmtCurrency(stats.total_capex)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-white/45">Worst coverage hole</p>
+            <p className="text-sm font-semibold">
+              {stats.worst_coverage_hole
+                ? `#${stats.worst_coverage_hole.cluster_id} (${stats.worst_coverage_hole.data_source}) · ${stats.worst_coverage_hole.point_count} pts`
+                : '—'}
+            </p>
+          </div>
+        </div>
+      )}
+    </GlassPanel>
+  )
+}
+
 export function MapPage() {
   const containerRef = useRef<HTMLDivElement>(null)
   const splitLeftRef = useRef<HTMLDivElement>(null)
@@ -253,6 +314,10 @@ export function MapPage() {
   const [forecastWeek, setForecastWeek] = useState(13)
 
   const [users, setUsers] = useState<UserOut[]>([])
+  const [overview, setOverview] = useState<OverviewStats | null>(null)
+  const [mapBounds, setMapBounds] = useState<MapBounds | null>(null)
+  const [currentStats, setCurrentStats] = useState<MapStats | null>(null)
+  const [forecastStats, setForecastStats] = useState<MapStats | null>(null)
   const [tool, setTool] = useState<DrawTool>('none')
   const [drawMenuOpen, setDrawMenuOpen] = useState(false)
   const [draftPoints, setDraftPoints] = useState<[number, number][]>([])
@@ -274,6 +339,10 @@ export function MapPage() {
     api.listUsers().then(setUsers).catch(() => undefined)
   }, [])
 
+  useEffect(() => {
+    api.overviewStats().then(setOverview).catch(() => undefined)
+  }, [])
+
   // Single map (non-split mode)
   useEffect(() => {
     if (splitActive || !containerRef.current) return
@@ -288,7 +357,9 @@ export function MapPage() {
 
     map.on('load', () => {
       api.currentStatus().then((rows) => addStatusLayer(map, 'current-status', rows)).catch(() => undefined)
+      setMapBounds(readBounds(map))
     })
+    map.on('moveend', () => setMapBounds(readBounds(map)))
 
     return () => {
       map.remove()
@@ -326,9 +397,11 @@ export function MapPage() {
     }
     left.on('move', syncFrom(left, right))
     right.on('move', syncFrom(right, left))
+    left.on('moveend', () => setMapBounds(readBounds(left)))
 
     left.on('load', () => {
       api.currentStatus().then((rows) => addStatusLayer(left, 'split-current', rows)).catch(() => undefined)
+      setMapBounds(readBounds(left))
     })
     right.on('load', () => {
       api
@@ -354,6 +427,21 @@ export function MapPage() {
       .then((rows) => addStatusLayer(right, 'split-forecast', rows))
       .catch(() => undefined)
   }, [forecastYear, forecastWeek, splitActive])
+
+  // Bounds-scoped current stats, for the tab beneath the map
+  useEffect(() => {
+    if (!mapBounds) return
+    api.mapStats(mapBounds).then(setCurrentStats).catch(() => setCurrentStats(null))
+  }, [mapBounds])
+
+  // Forecast stats for the same bounds — only relevant in split mode
+  useEffect(() => {
+    if (!mapBounds || !splitActive) return
+    api
+      .mapStats(mapBounds, forecastYear, forecastWeek)
+      .then(setForecastStats)
+      .catch(() => setForecastStats(null))
+  }, [mapBounds, splitActive, forecastYear, forecastWeek])
 
   // Render newly created annotations as they're saved, accumulating across
   // the session so the map fills up as the user keeps drawing
@@ -607,24 +695,69 @@ export function MapPage() {
         {status && <p className="text-sm text-white/70">{status}</p>}
       </GlassPanel>
 
-      {!splitActive && (
-        <div ref={containerRef} className="h-[70vh] w-full overflow-hidden rounded-3xl border border-white/15" />
-      )}
+      <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
+        {!splitActive && (
+          <div ref={containerRef} className="h-[55vh] w-full overflow-hidden rounded-3xl border border-white/15" />
+        )}
+
+        {splitActive && (
+          <div className="grid h-[55vh] grid-cols-2 gap-2">
+            <div className="relative overflow-hidden rounded-3xl border border-white/15">
+              <div className="absolute left-2 top-2 z-10 rounded-lg bg-ink-900/80 px-2.5 py-1 text-xs font-semibold text-white/90">
+                Current status
+              </div>
+              <div ref={splitLeftRef} className="h-full w-full" />
+            </div>
+            <div className="relative overflow-hidden rounded-3xl border border-white/15">
+              <div className="absolute left-2 top-2 z-10 rounded-lg bg-ink-900/80 px-2.5 py-1 text-xs font-semibold text-white/90">
+                Forecast
+              </div>
+              <div ref={splitRightRef} className="h-full w-full" />
+            </div>
+          </div>
+        )}
+
+        <GlassPanel>
+          <p className="mb-3.5 font-display text-sm font-semibold">Network overview</p>
+          <div className="space-y-2.5 text-sm">
+            <div className="flex justify-between">
+              <span className="text-white/55">Total sites</span>
+              <span className="font-semibold">{overview?.total_sites ?? '—'}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-white/55">Congested sites</span>
+              <span className="font-semibold text-red-300">{overview?.total_congested_sites ?? '—'}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-white/55">Total CAPEX needed</span>
+              <span className="font-semibold">{fmtCurrency(overview?.total_capex)}</span>
+            </div>
+            <div className="border-t border-white/10 pt-2.5">
+              <p className="text-white/55">Worst Ookla cluster</p>
+              <p className="font-semibold">
+                {overview?.worst_ookla_cluster
+                  ? `#${overview.worst_ookla_cluster.cluster_id} · ${overview.worst_ookla_cluster.point_count} pts · ${fmt(overview.worst_ookla_cluster.avg_signal)} dBm`
+                  : '—'}
+              </p>
+            </div>
+            <div>
+              <p className="text-white/55">Worst MR cluster</p>
+              <p className="font-semibold">
+                {overview?.worst_mr_cluster
+                  ? `#${overview.worst_mr_cluster.cluster_id} · ${overview.worst_mr_cluster.point_count} pts · ${fmt(overview.worst_mr_cluster.avg_signal)} dBm`
+                  : '—'}
+              </p>
+            </div>
+          </div>
+        </GlassPanel>
+      </div>
+
+      {!splitActive && <MapStatsPanel title="Viewport stats" stats={currentStats} />}
 
       {splitActive && (
-        <div className="grid h-[70vh] grid-cols-2 gap-2">
-          <div className="relative overflow-hidden rounded-3xl border border-white/15">
-            <div className="absolute left-2 top-2 z-10 rounded-lg bg-ink-900/80 px-2.5 py-1 text-xs font-semibold text-white/90">
-              Current status
-            </div>
-            <div ref={splitLeftRef} className="h-full w-full" />
-          </div>
-          <div className="relative overflow-hidden rounded-3xl border border-white/15">
-            <div className="absolute left-2 top-2 z-10 rounded-lg bg-ink-900/80 px-2.5 py-1 text-xs font-semibold text-white/90">
-              Forecast
-            </div>
-            <div ref={splitRightRef} className="h-full w-full" />
-          </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <MapStatsPanel title="Viewport stats — current" stats={currentStats} />
+          <MapStatsPanel title="Viewport stats — forecast" stats={forecastStats} />
         </div>
       )}
 

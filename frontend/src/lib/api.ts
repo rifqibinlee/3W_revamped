@@ -139,6 +139,37 @@ export interface SiteDetail {
   capex_upgrades: Record<string, unknown>[]
 }
 
+export interface CoverageHoleSummary {
+  cluster_id: number
+  data_source: string
+  point_count: number
+  avg_signal: number | null
+}
+
+export interface MapStats {
+  total_sites: number
+  congested_sites: number
+  healthy_sites: number
+  coverage_holes: number
+  worst_coverage_hole: CoverageHoleSummary | null
+  total_capex: number
+}
+
+export interface OverviewStats {
+  total_sites: number
+  total_congested_sites: number
+  total_capex: number
+  worst_ookla_cluster: CoverageHoleSummary | null
+  worst_mr_cluster: CoverageHoleSummary | null
+}
+
+export interface MapBounds {
+  south: number
+  west: number
+  north: number
+  east: number
+}
+
 export interface CapexPriceItem {
   price?: number
   price_min: number
@@ -201,6 +232,18 @@ export const api = {
     request<CurrentStatusRow[]>(`/analytics/forecast-status?year=${year}&week=${week}`),
 
   siteDetail: (siteId: string) => request<SiteDetail>(`/analytics/site-detail/${siteId}`),
+
+  mapStats: (bounds: MapBounds, year?: number, week?: number) => {
+    const params = new URLSearchParams({
+      south: String(bounds.south), west: String(bounds.west),
+      north: String(bounds.north), east: String(bounds.east),
+    })
+    if (year != null) params.set('year', String(year))
+    if (week != null) params.set('week', String(week))
+    return request<MapStats>(`/analytics/map-stats?${params}`)
+  },
+
+  overviewStats: () => request<OverviewStats>('/analytics/overview-stats'),
 
   filterOptions: () => request<FilterOptions>('/analytics/filter-options'),
 

@@ -47,3 +47,24 @@ def test_site_detail_endpoint_with_no_data(client) -> None:
     resp = client.get("/analytics/site-detail/SITE001")
     assert resp.status_code == 200
     assert resp.json() == {"site": None, "congested": False, "sectors": [], "forecast": [], "capex_upgrades": []}
+
+
+def test_map_stats_endpoint_requires_bounds(client) -> None:
+    resp = client.get("/analytics/map-stats")
+    assert resp.status_code == 422
+
+    resp = client.get("/analytics/map-stats?south=0&west=100&north=5&east=102")
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "total_sites": 0, "congested_sites": 0, "healthy_sites": 0,
+        "coverage_holes": 0, "worst_coverage_hole": None, "total_capex": 0.0,
+    }
+
+
+def test_overview_stats_endpoint_with_no_data(client) -> None:
+    resp = client.get("/analytics/overview-stats")
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "total_sites": 0, "total_congested_sites": 0, "total_capex": 0.0,
+        "worst_ookla_cluster": None, "worst_mr_cluster": None,
+    }

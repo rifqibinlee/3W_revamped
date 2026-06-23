@@ -20,6 +20,19 @@ def site_detail(site_id: str) -> dict:
     return service.site_detail(site_id)
 
 
+@router.get("/map-stats")
+def map_stats(
+    south: float, west: float, north: float, east: float,
+    year: int | None = None, week: int | None = None,
+) -> dict:
+    return service.map_stats(south, west, north, east, year, week)
+
+
+@router.get("/overview-stats")
+def overview_stats() -> dict:
+    return service.overview_stats()
+
+
 def _filters(
     region: str | None = None,
     year: int | None = None,
