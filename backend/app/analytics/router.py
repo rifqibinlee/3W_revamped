@@ -15,6 +15,11 @@ def forecast_status(year: int, week: int = Query(..., description="Quarter week:
     return service.forecast_status(year, week)
 
 
+@router.get("/site-detail/{site_id}")
+def site_detail(site_id: str) -> dict:
+    return service.site_detail(site_id)
+
+
 def _filters(
     region: str | None = None,
     year: int | None = None,

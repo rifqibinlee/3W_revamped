@@ -172,6 +172,59 @@ def test_summary_stats_empty_when_no_data(tmp_path, monkeypatch) -> None:
     assert stats == {"total_sectors": 0, "congested_count": 0, "avg_volume_gb": 0.0}
 
 
+def test_site_detail_returns_empty_when_no_files(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    detail = service.site_detail("SITE001")
+    assert detail == {"site": None, "congested": False, "sectors": [], "forecast": [], "capex_upgrades": []}
+
+
+def test_site_detail_joins_site_sectors_and_forecast(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_parquet(
+        tmp_path / "site_coordinates.parquet",
+        [("SITE001", "Central", "C1", 3.1, 101.6)],
+        ("site_id", "region", "cluster", "latitude", "longitude"),
+    )
+    _write_congestion_fixture(tmp_path, [
+        ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", False, 10.0, 10, 2026),
+        ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 12.0, 11, 2026),  # latest -> wins
+        ("SITE002", "SITE002_Macro_1", "Southern", "C2", "Digi", True, 99.0, 11, 2026),  # different site
+    ])
+    _write_parquet(
+        tmp_path / "forecast_results.parquet",
+        [
+            ("SITE001_Macro_1", "Central", 13, 2026),
+            ("SITE002_Macro_1", "Southern", 13, 2026),
+        ],
+        ("zoom_sector_id", "region", "week", "year"),
+    )
+
+    detail = service.site_detail("site001")
+    assert detail["site"]["site_id"] == "SITE001"
+    assert detail["congested"] is True
+    assert len(detail["sectors"]) == 1
+    assert detail["sectors"][0]["week"] == 11
+    assert len(detail["forecast"]) == 1
+    assert detail["forecast"][0]["zoom_sector_id"] == "SITE001_Macro_1"
+    assert detail["capex_upgrades"] == []
+
+
+def test_site_detail_includes_capex_upgrades(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_congestion_fixture(tmp_path, [
+        ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 10.0, 10, 2026),
+    ])
+    _write_parquet(
+        tmp_path / "capex_upgrades_pre_capex.parquet",
+        [("SITE001_Macro_1", "Case 3", 50000.0)],
+        ("zoom_sector_id", "suggested_upgrade_case", "estimated_total_capex_rm"),
+    )
+
+    detail = service.site_detail("SITE001")
+    assert len(detail["capex_upgrades"]) == 1
+    assert detail["capex_upgrades"][0]["suggested_upgrade_case"] == "Case 3"
+
+
 def test_filter_options_lists_distinct_values(tmp_path, monkeypatch) -> None:
     _setup(tmp_path, monkeypatch)
     _write_congestion_fixture(tmp_path, [

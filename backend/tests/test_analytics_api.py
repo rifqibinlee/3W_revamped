@@ -41,3 +41,9 @@ def test_filter_options_endpoint_with_no_data(client) -> None:
     resp = client.get("/analytics/filter-options")
     assert resp.status_code == 200
     assert resp.json() == {"regions": [], "years": [], "weeks": [], "operators": []}
+
+
+def test_site_detail_endpoint_with_no_data(client) -> None:
+    resp = client.get("/analytics/site-detail/SITE001")
+    assert resp.status_code == 200
+    assert resp.json() == {"site": None, "congested": False, "sectors": [], "forecast": [], "capex_upgrades": []}

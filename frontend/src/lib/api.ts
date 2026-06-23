@@ -123,6 +123,22 @@ export interface ForecastRow {
   month: number
 }
 
+export interface SiteDetail {
+  site: { site_id: string; region: string; cluster: string; latitude: number; longitude: number } | null
+  congested: boolean
+  sectors: SectorMetricRow[]
+  forecast: ForecastRow[]
+  capex_upgrades: Record<string, unknown>[]
+}
+
+export interface CapexPriceItem {
+  price?: number
+  price_min: number
+  price_max: number
+}
+
+export type CapexPricing = Record<string, Record<string, CapexPriceItem>>
+
 export interface SummaryStats {
   total_sectors: number
   congested_count: number
@@ -176,6 +192,8 @@ export const api = {
   forecastStatus: (year: number, week: number) =>
     request<CurrentStatusRow[]>(`/analytics/forecast-status?year=${year}&week=${week}`),
 
+  siteDetail: (siteId: string) => request<SiteDetail>(`/analytics/site-detail/${siteId}`),
+
   filterOptions: () => request<FilterOptions>('/analytics/filter-options'),
 
   summary: (filters: AnalyticsFilters = {}) => request<SummaryStats>(`/analytics/summary${filterParams(filters)}`),
@@ -225,5 +243,13 @@ export const api = {
     request<{ id: string; body: string }>(`/projects/${projectId}/comments`, {
       method: 'POST',
       body: JSON.stringify({ body }),
+    }),
+
+  capexPricing: () => request<CapexPricing>('/capex-pricing'),
+
+  upsertCapexPrice: (category: string, itemName: string, input: { price: number; price_min?: number; price_max?: number }) =>
+    request<CapexPricing>(`/capex-pricing/${category}/${encodeURIComponent(itemName)}`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
     }),
 }

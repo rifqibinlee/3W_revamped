@@ -1,9 +1,9 @@
-import type { FeatureCollection, Geometry, Polygon } from 'geojson'
+import type { Feature, FeatureCollection, Geometry, Polygon } from 'geojson'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useEffect, useRef, useState } from 'react'
 import { GlassPanel } from '../components/GlassPanel'
-import { api, ApiError, type CurrentStatusRow, type ProjectOut } from '../lib/api'
+import { api, ApiError, type AnnotationOut, type CurrentStatusRow, type ProjectOut, type SiteDetail } from '../lib/api'
 
 const STYLE_URL = 'https://demotiles.maplibre.org/style.json'
 const DEFAULT_CENTER: [number, number] = [101.5, 3.1]
@@ -40,7 +40,54 @@ function circlePolygon(center: [number, number], radiusMeters: number): Polygon 
   return { type: 'Polygon', coordinates: [coords] }
 }
 
-function addStatusLayer(map: maplibregl.Map, sourceId: string, rows: CurrentStatusRow[]) {
+function fmt(n: number | null | undefined, digits = 1): string {
+  return n == null || Number.isNaN(n) ? '—' : n.toFixed(digits)
+}
+
+function siteDetailHtml(siteId: string, detail: SiteDetail | null, loading: boolean): string {
+  if (loading) {
+    return `<div style="font-family:inherit;min-width:220px;padding:4px;"><strong>${siteId}</strong><br/><span style="opacity:.7">Loading…</span></div>`
+  }
+  if (!detail) {
+    return `<div style="font-family:inherit;min-width:220px;padding:4px;"><strong>${siteId}</strong><br/><span style="opacity:.7">No data</span></div>`
+  }
+
+  const latest = detail.sectors[0]
+  const statusLine = detail.congested
+    ? '<span style="color:#f87171;font-weight:700;">⚠ Congested</span>'
+    : '<span style="color:#4ade80;font-weight:700;">✓ Healthy</span>'
+
+  const paramsHtml = latest
+    ? `
+      <table style="width:100%;font-size:11px;margin-top:6px;border-collapse:collapse;">
+        <tr><td style="opacity:.6;padding:1px 0;">Data volume (GB)</td><td style="text-align:right;">${fmt(latest.eric_data_volume_ul_dl)}</td></tr>
+        <tr><td style="opacity:.6;padding:1px 0;">PRB utilization</td><td style="text-align:right;">${fmt(latest.eric_prb_util_rate)}%</td></tr>
+        <tr><td style="opacity:.6;padding:1px 0;">DL throughput</td><td style="text-align:right;">${fmt(latest.eric_dl_user_ip_thpt)}</td></tr>
+        <tr><td style="opacity:.6;padding:1px 0;">Max RRC users</td><td style="text-align:right;">${fmt(latest.eric_max_rrc_user, 0)}</td></tr>
+      </table>`
+    : '<p style="font-size:11px;opacity:.6;margin-top:4px;">No sector KPIs available</p>'
+
+  const nextForecast = detail.forecast[0]
+  const forecastHtml = nextForecast
+    ? `<p style="font-size:11px;margin-top:6px;"><strong>Forecast</strong> (Wk ${nextForecast.week}/${nextForecast.year}): ${nextForecast.congested ? '⚠ Congested' : '✓ Normal'} · ${fmt(nextForecast.predicted_eric_prb_util_rate)}% PRB</p>`
+    : '<p style="font-size:11px;opacity:.6;margin-top:6px;">No forecast available</p>'
+
+  const upgrade = detail.capex_upgrades[0] as Record<string, unknown> | undefined
+  const capexHtml = upgrade
+    ? `<p style="font-size:11px;margin-top:6px;"><strong>Upgrade:</strong> ${upgrade.suggested_upgrade_case ?? '—'}<br/>Est. CAPEX: RM ${fmt(upgrade.estimated_total_capex_rm as number, 0)}</p>`
+    : '<p style="font-size:11px;opacity:.6;margin-top:6px;">No upgrade recommended</p>'
+
+  return `
+    <div style="font-family:inherit;min-width:220px;padding:4px;">
+      <strong>${siteId}</strong> ${detail.site ? `· ${detail.site.region}` : ''}<br/>
+      ${statusLine}
+      ${paramsHtml}
+      ${forecastHtml}
+      ${capexHtml}
+    </div>`
+}
+
+function addStatusLayer(map: maplibregl.Map, sourceId: string, rows: CurrentStatusRow[], onSiteClick?: (siteId: string) => void) {
   const geojson = statusGeoJson(rows)
   const existing = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined
   if (existing) {
@@ -59,17 +106,95 @@ function addStatusLayer(map: maplibregl.Map, sourceId: string, rows: CurrentStat
       'circle-stroke-color': '#ffffff',
     },
   })
+  map.on('mouseenter', `${sourceId}-circle`, () => {
+    map.getCanvas().style.cursor = 'pointer'
+  })
+  map.on('mouseleave', `${sourceId}-circle`, () => {
+    map.getCanvas().style.cursor = ''
+  })
   map.on('click', `${sourceId}-circle`, (e) => {
     const f = e.features?.[0]
     if (!f) return
-    const props = f.properties as { site_id: string; region: string; congested: boolean }
-    new maplibregl.Popup()
-      .setLngLat(e.lngLat)
-      .setHTML(
-        `<strong>${props.site_id}</strong><br/>${props.region}<br/>${props.congested ? '⚠ Congested' : '✓ Normal'}`,
-      )
-      .addTo(map)
+    const props = f.properties as { site_id: string }
+    const popup = new maplibregl.Popup().setLngLat(e.lngLat).setHTML(siteDetailHtml(props.site_id, null, true)).addTo(map)
+    api
+      .siteDetail(props.site_id)
+      .then((detail) => popup.setHTML(siteDetailHtml(props.site_id, detail, false)))
+      .catch(() => popup.setHTML(siteDetailHtml(props.site_id, null, false)))
+    onSiteClick?.(props.site_id)
   })
+}
+
+function annotationToFeature(a: AnnotationOut): Feature {
+  return { type: 'Feature', geometry: a.geometry as unknown as Geometry, properties: { label: a.label ?? '' } }
+}
+
+function clickPopup(map: maplibregl.Map, layerId: string) {
+  map.on('click', layerId, (e) => {
+    const f = e.features?.[0]
+    if (!f) return
+    const label = (f.properties as { label: string }).label
+    new maplibregl.Popup().setLngLat(e.lngLat).setHTML(`<strong>${label || 'Annotation'}</strong>`).addTo(map)
+  })
+}
+
+function setSourceData(map: maplibregl.Map, sourceId: string, features: Feature[]): boolean {
+  const data: FeatureCollection = { type: 'FeatureCollection', features }
+  const existing = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined
+  if (existing) {
+    existing.setData(data)
+    return true
+  }
+  map.addSource(sourceId, { type: 'geojson', data })
+  return false
+}
+
+function addAnnotationsLayer(map: maplibregl.Map, annotations: AnnotationOut[]) {
+  if (!map.isStyleLoaded()) {
+    map.once('load', () => addAnnotationsLayer(map, annotations))
+    return
+  }
+
+  const features = annotations.map(annotationToFeature)
+  const pointFeatures = features.filter((f) => f.geometry.type === 'Point')
+  const lineFeatures = features.filter((f) => f.geometry.type === 'LineString')
+  const polygonFeatures = features.filter((f) => f.geometry.type === 'Polygon')
+
+  if (!setSourceData(map, 'annotation-points', pointFeatures)) {
+    map.addLayer({
+      id: 'annotation-points-layer',
+      type: 'circle',
+      source: 'annotation-points',
+      paint: { 'circle-radius': 7, 'circle-color': '#facc15', 'circle-stroke-width': 2, 'circle-stroke-color': '#1e1b4b' },
+    })
+    clickPopup(map, 'annotation-points-layer')
+  }
+
+  if (!setSourceData(map, 'annotation-lines', lineFeatures)) {
+    map.addLayer({
+      id: 'annotation-lines-layer',
+      type: 'line',
+      source: 'annotation-lines',
+      paint: { 'line-color': '#facc15', 'line-width': 2 },
+    })
+    clickPopup(map, 'annotation-lines-layer')
+  }
+
+  if (!setSourceData(map, 'annotation-polygons', polygonFeatures)) {
+    map.addLayer({
+      id: 'annotation-polygons-fill',
+      type: 'fill',
+      source: 'annotation-polygons',
+      paint: { 'fill-color': '#facc15', 'fill-opacity': 0.15 },
+    })
+    map.addLayer({
+      id: 'annotation-polygons-line',
+      type: 'line',
+      source: 'annotation-polygons',
+      paint: { 'line-color': '#facc15', 'line-width': 2 },
+    })
+    clickPopup(map, 'annotation-polygons-fill')
+  }
 }
 
 export function MapPage() {
@@ -89,6 +214,7 @@ export function MapPage() {
   const [tool, setTool] = useState<DrawTool>('none')
   const [draftPoints, setDraftPoints] = useState<[number, number][]>([])
   const [status, setStatus] = useState<string | null>(null)
+  const [annotationsVersion, setAnnotationsVersion] = useState(0)
 
   useEffect(() => {
     api.listProjects().then(setProjects).catch(() => undefined)
@@ -175,6 +301,17 @@ export function MapPage() {
       .catch(() => undefined)
   }, [forecastYear, forecastWeek, splitActive])
 
+  // Render the selected project's saved annotations, reloading whenever the
+  // project changes or a new one is added
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || splitActive || !selectedProjectId) return
+    api
+      .listAnnotations(selectedProjectId)
+      .then((rows) => addAnnotationsLayer(map, rows))
+      .catch(() => undefined)
+  }, [selectedProjectId, annotationsVersion, splitActive])
+
   // Drawing tool: wire click handlers on the active (non-split) map
   useEffect(() => {
     const map = mapRef.current
@@ -253,6 +390,7 @@ export function MapPage() {
     try {
       await api.addAnnotation(selectedProjectId, geometry as unknown as Record<string, unknown>, label || undefined)
       setStatus('Annotation added')
+      setAnnotationsVersion((v) => v + 1)
       setDraftPoints([])
       setTool('none')
     } catch (err) {
