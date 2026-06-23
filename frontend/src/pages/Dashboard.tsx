@@ -1,17 +1,28 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { DataTable, type Column } from '../components/DataTable'
 import { FilterBar } from '../components/FilterBar'
+import { ForecastChart } from '../components/ForecastChart'
 import { GlassPanel } from '../components/GlassPanel'
 import { Pagination } from '../components/Pagination'
 import {
   api,
+  ApiError,
   type AnalyticsFilters,
   type FilterOptions,
   type ForecastRow,
   type SectorMetricRow,
+  type SiteForecastSeries,
   type SummaryStats,
   type TaskOut,
 } from '../lib/api'
+
+const FORECAST_METRICS: { value: string; label: string }[] = [
+  { value: 'eric_prb_util_rate', label: 'PRB utilization (%)' },
+  { value: 'eric_data_volume_ul_dl', label: 'Data volume (GB)' },
+  { value: 'eric_dl_user_ip_thpt', label: 'DL throughput (Mbps)' },
+]
+
+const HORIZON_OPTIONS = [4, 8, 13, 26]
 
 const PAGE_SIZE = 12
 
@@ -103,6 +114,13 @@ export function Dashboard() {
   const [congestedResult, setCongestedResult] = useState({ rows: [] as SectorMetricRow[], total: 0 })
   const [forecastResult, setForecastResult] = useState({ rows: [] as ForecastRow[], total: 0 })
 
+  const [forecastSiteInput, setForecastSiteInput] = useState('')
+  const [forecastMetric, setForecastMetric] = useState(FORECAST_METRICS[0].value)
+  const [forecastHorizon, setForecastHorizon] = useState(8)
+  const [forecastSeries, setForecastSeries] = useState<SiteForecastSeries | null>(null)
+  const [forecastChartLoading, setForecastChartLoading] = useState(false)
+  const [forecastChartError, setForecastChartError] = useState<string | null>(null)
+
   useEffect(() => {
     Promise.all([api.ganttRows(), api.filterOptions()])
       .then(([gantt, filterOptions]) => {
@@ -136,11 +154,25 @@ export function Dashboard() {
 
   useEffect(refreshActiveTab, [refreshActiveTab])
 
-  const tasksByStatus = useMemo(() => {
-    const counts: Record<string, number> = { todo: 0, in_progress: 0, pending_review: 0, done: 0 }
-    for (const t of tasks) if (t.status) counts[t.status] = (counts[t.status] ?? 0) + 1
-    return counts
-  }, [tasks])
+  async function handleGenerateForecast() {
+    const siteId = forecastSiteInput.trim()
+    if (!siteId) {
+      setForecastChartError('Enter a site ID')
+      return
+    }
+    setForecastChartLoading(true)
+    setForecastChartError(null)
+    try {
+      const series = await api.siteForecast(siteId, forecastMetric, forecastHorizon)
+      setForecastSeries(series)
+      if (series.actual.length === 0) setForecastChartError(`No data found for site "${siteId}"`)
+    } catch (err) {
+      setForecastSeries(null)
+      setForecastChartError(err instanceof ApiError ? err.message : 'Could not generate forecast')
+    } finally {
+      setForecastChartLoading(false)
+    }
+  }
 
   if (loading) return <p className="text-sm text-white/60">Loading…</p>
   if (error) return <p className="text-sm text-red-300">{error}</p>
@@ -165,11 +197,7 @@ export function Dashboard() {
             </span>
             <span className="text-xs text-accent-400">of {summary.total_sectors} sectors</span>
           </div>
-          <div className="grid grid-cols-3 gap-2.5">
-            <StatTile value={tasksByStatus.in_progress} label="In progress" />
-            <StatTile value={tasksByStatus.done} label="Completed" />
-            <StatTile value={tasksByStatus.todo} label="Upcoming" />
-          </div>
+          <p className="text-xs text-white/45">{summary.congested_count} of {summary.total_sectors} sectors congested, matching the current filters above.</p>
         </GlassPanel>
 
         <GlassPanel>
@@ -222,14 +250,80 @@ export function Dashboard() {
 
         {activeTab === 'forecast' && (
           <>
-            <p className="mb-3.5 text-xs text-white/55">52-week predictions per sector.</p>
-            <div className="mb-3.5 flex flex-wrap items-center gap-4 text-xs text-white/60">
-              <span className="font-medium text-white/80">Legend</span>
-              <LegendItem color="bg-white/70" label="Actual" />
-              <LegendItem color="border border-dashed border-green-400" label="Forecast (vol)" />
-              <LegendItem color="border border-dashed border-accent-400" label="Forecast (PRB)" />
-              <LegendItem color="border border-dashed border-sky-400" label="Forecast (thpt)" />
+            <div className="mb-4 rounded-2xl bg-white/5 p-4">
+              <p className="mb-1 font-display text-sm font-semibold">Site forecast graph</p>
+              <p className="mb-3 text-xs text-white/55">
+                Live linear-regression projection from a site's own weekly history, with a 95% confidence band —
+                pick a site to see where it's headed.
+              </p>
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="min-w-[160px] flex-1">
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">Site ID</label>
+                  <input
+                    type="text"
+                    value={forecastSiteInput}
+                    onChange={(e) => setForecastSiteInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleGenerateForecast()}
+                    placeholder="e.g. 1508A"
+                    className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">Metric</label>
+                  <select
+                    value={forecastMetric}
+                    onChange={(e) => setForecastMetric(e.target.value)}
+                    className="rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
+                  >
+                    {FORECAST_METRICS.map((m) => (
+                      <option key={m.value} value={m.value} className="bg-ink-900">
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">Horizon</label>
+                  <select
+                    value={forecastHorizon}
+                    onChange={(e) => setForecastHorizon(Number(e.target.value))}
+                    className="rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
+                  >
+                    {HORIZON_OPTIONS.map((h) => (
+                      <option key={h} value={h} className="bg-ink-900">
+                        {h} weeks
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  onClick={handleGenerateForecast}
+                  disabled={forecastChartLoading}
+                  className="rounded-xl bg-gradient-to-r from-accent-400 to-accent-500 px-5 py-2 text-sm font-semibold text-ink-900 disabled:opacity-60"
+                >
+                  {forecastChartLoading ? 'Generating…' : 'Generate plot'}
+                </button>
+              </div>
+
+              {forecastChartError && <p className="mt-3 text-sm text-red-300">{forecastChartError}</p>}
+
+              {forecastSeries && forecastSeries.actual.length > 0 && (
+                <div className="mt-4">
+                  <ForecastChart
+                    actual={forecastSeries.actual}
+                    forecast={forecastSeries.forecast}
+                    metricLabel={FORECAST_METRICS.find((m) => m.value === forecastSeries.metric)?.label ?? forecastSeries.metric}
+                  />
+                  <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-white/60">
+                    <LegendItem color="bg-white/70" label="Actual" />
+                    <LegendItem color="border border-dashed border-sky-400" label="Forecast" />
+                    <LegendItem color="bg-sky-400/20" label="95% confidence band" />
+                  </div>
+                </div>
+              )}
             </div>
+
+            <p className="mb-3.5 text-xs text-white/55">52-week predictions per sector (all sectors, current filters).</p>
             <DataTable columns={forecastColumns} rows={forecastResult.rows} emptyMessage="No forecast data — run forecast_results first." />
             <Pagination page={page} pageSize={PAGE_SIZE} total={forecastResult.total} onPageChange={(p) => setPage('forecast', p)} />
           </>
@@ -241,6 +335,11 @@ export function Dashboard() {
               <strong>Congestion criteria</strong> (urban/KMC + NIC: PRB ≥80% &amp; thpt &lt;7 Mbps · urban/KMC: PRB
               ≥80% &amp; thpt &lt;5 Mbps · rural: PRB ≥92% &amp; thpt &lt;3 Mbps)
             </div>
+            <p className="mb-3.5 text-xs text-white/45">
+              Each row is one congested week for a sector, so a sector congested in multiple weeks appears more than
+              once — that's why this count can exceed the "{summary.congested_count} congested sectors" stat above,
+              which counts each sector only once regardless of how many weeks it was congested.
+            </p>
             <DataTable columns={congestedColumns} rows={congestedResult.rows} emptyMessage="No congested sectors." />
             <Pagination page={page} pageSize={PAGE_SIZE} total={congestedResult.total} onPageChange={(p) => setPage('congested', p)} />
           </>

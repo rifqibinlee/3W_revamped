@@ -23,7 +23,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="relative min-h-screen">
       <AnimatedBackground />
-      <div className="relative z-10 mx-auto max-w-6xl px-7 py-6">
+      <div className="relative mx-auto max-w-6xl px-7 py-6">
         <header className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-accent-400 to-sky-500 font-display text-sm font-bold text-ink-900">

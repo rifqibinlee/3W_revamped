@@ -4,7 +4,7 @@
 // so there's no per-frame JS loop to silently fail.
 export function AnimatedBackground() {
   return (
-    <div className="fixed inset-0 -z-10 overflow-hidden bg-ink-950">
+    <div className="fixed inset-0 overflow-hidden bg-ink-950">
       <div className="absolute inset-0">
         <div className="blob blob-blue-1" />
         <div className="blob blob-yellow-1" />

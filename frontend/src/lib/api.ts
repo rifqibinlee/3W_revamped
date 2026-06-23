@@ -224,6 +224,23 @@ export interface PaginatedResult<T> {
   total: number
 }
 
+export interface ForecastPoint {
+  date: string
+  value: number
+}
+
+export interface ForecastPredictionPoint extends ForecastPoint {
+  ci_lower: number
+  ci_upper: number
+}
+
+export interface SiteForecastSeries {
+  site_id: string
+  metric: string
+  actual: ForecastPoint[]
+  forecast: ForecastPredictionPoint[]
+}
+
 export interface MapBounds {
   south: number
   west: number
@@ -309,6 +326,11 @@ export const api = {
   },
 
   overviewStats: () => request<OverviewStats>('/analytics/overview-stats'),
+
+  siteForecast: (siteId: string, metric: string, horizonWeeks: number) =>
+    request<SiteForecastSeries>(
+      `/analytics/site-forecast/${encodeURIComponent(siteId)}?metric=${metric}&horizon_weeks=${horizonWeeks}`,
+    ),
 
   filterOptions: () => request<FilterOptions>('/analytics/filter-options'),
 
