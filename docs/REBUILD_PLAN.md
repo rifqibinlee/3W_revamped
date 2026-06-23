@@ -40,10 +40,15 @@ Module-by-module phased rebuild of 3W. Each phase should be reviewed before movi
   - [x] Design system locked in: glassmorphic panels on a deep indigo-blue background, live canvas particle stream (blue/yellow, ~2200 particles, glow), Space Grotesk + Plus Jakarta Sans (deliberately not the default Inter/Roboto look)
   - [x] Foundation: Vite scaffold, Tailwind v4 theme tokens, `ParticleBackground`, `GlassPanel`, `AppShell` (nav), API client + auth context wired to the real backend
   - [x] Login page — wired to `POST /auth/login`
-  - [x] Dashboard page — wired to `GET /analytics/current-status` + `GET /annotations/gantt/rows` (real data, not mock)
-  - [ ] Remaining pages: Map (MapLibre + split-screen current/forecast), Tasks/Gantt board, Chat, Pricing admin, Reviews, Agent chat, RAG search
-  - [ ] Metabase embedding
-  - [x] 1 component test, lint clean, typecheck clean, production build verified
+  - [x] Dashboard page — wired to `GET /analytics/current-status` + `GET /annotations/gantt/rows` (real data, not mock), full legacy "RAN Forecast" tab ported (filter bar, stat tiles, sector metrics/congested/forecast tables)
+  - [x] Map page — MapLibre GL, split-screen current-vs-forecast (synced panes), icon-based draw tool (point/line/polygon/buffer) creating a brand-new note or project per shape, rich site-detail popup (KPIs + forecast + CAPEX upgrade), viewport-scoped + network-wide stats panels (`GET /analytics/map-stats`, `GET /analytics/overview-stats`)
+  - [x] Notes page — list + description + map centered on the note's annotation
+  - [x] Projects page — list + kanban (todo/in progress/pending review/done) + auto-generated Gantt strip + discussion thread; tasks support multiple assignees
+  - [x] Chat page — conversation list (`GET /chat/conversations`, new) + thread view + new-DM composer
+  - [x] CAPEX pricing admin page — two-tier (admin sees/edits exact price, staff sees range only)
+  - [x] Agent page — chat UI against the stateless `POST /agent/chat` (LLM provider reachability is an environment concern, not a page bug)
+  - [ ] Reviews page, RAG search UI, Metabase embedding
+  - [x] Frontend typecheck/lint clean throughout, vitest clean, 170/170 backend tests passing
 - [ ] **Phase 6 — AWS readiness:** Terraform (S3, RDS, ECS/Fargate or App Runner), secrets migration, CI/CD deploy pipeline
 
 See [docs/adr/0001-architecture.md](adr/0001-architecture.md) for the architecture rationale behind these choices.
