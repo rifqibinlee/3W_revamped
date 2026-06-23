@@ -65,3 +65,26 @@ def test_login_wrong_password_via_api_returns_401(client) -> None:
 def test_me_without_token_returns_401(client) -> None:
     resp = client.get("/auth/me")
     assert resp.status_code == 401
+
+
+def test_list_users_requires_auth(client) -> None:
+    resp = client.get("/auth/users")
+    assert resp.status_code == 401
+
+
+def test_list_users_returns_directory(client) -> None:
+    client.post(
+        "/auth/register",
+        json={"username": "frank", "email": "frank@example.com", "password": "password123", "role": "staff"},
+    )
+    client.post(
+        "/auth/register",
+        json={"username": "grace", "email": "grace@example.com", "password": "password123", "role": "planner"},
+    )
+    login_resp = client.post("/auth/login", json={"username": "frank", "password": "password123"})
+    headers = {"Authorization": f"Bearer {login_resp.json()['access_token']}"}
+
+    resp = client.get("/auth/users", headers=headers)
+    assert resp.status_code == 200
+    usernames = {u["username"] for u in resp.json()}
+    assert {"frank", "grace"}.issubset(usernames)

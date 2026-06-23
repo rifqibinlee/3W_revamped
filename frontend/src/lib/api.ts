@@ -148,6 +148,8 @@ export const api = {
 
   me: () => request<UserOut>('/auth/me'),
 
+  listUsers: () => request<UserOut[]>('/auth/users'),
+
   ganttRows: () => request<AnnotationOut[]>('/annotations/gantt/rows'),
 
   currentStatus: () => request<CurrentStatusRow[]>('/analytics/current-status'),
@@ -164,4 +166,28 @@ export const api = {
 
   forecastTable: (filters: AnalyticsFilters = {}) =>
     request<ForecastRow[]>(`/analytics/forecast-table${filterParams(filters)}`),
+
+  createAnnotation: (input: {
+    title: string
+    geometry: Record<string, unknown>
+    description?: string
+    priority?: string
+    assignee_id?: string
+    due_date?: string
+  }) => request<AnnotationOut>('/annotations', { method: 'POST', body: JSON.stringify(input) }),
+
+  assignTask: (id: string, assignee_id: string, due_date: string) =>
+    request<AnnotationOut>(`/annotations/${id}/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ assignee_id, due_date }),
+    }),
+
+  startTask: (id: string) => request<AnnotationOut>(`/annotations/${id}/start`, { method: 'POST' }),
+
+  submitTask: (id: string) => request<AnnotationOut>(`/annotations/${id}/submit`, { method: 'POST' }),
+
+  approveTask: (id: string) => request<AnnotationOut>(`/annotations/${id}/approve`, { method: 'POST' }),
+
+  rejectTask: (id: string, reason: string) =>
+    request<AnnotationOut>(`/annotations/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) }),
 }

@@ -4,6 +4,7 @@ import { AppShell } from './components/AppShell'
 import { useAuth } from './lib/useAuth'
 import { Dashboard } from './pages/Dashboard'
 import { Login } from './pages/Login'
+import { Tasks } from './pages/Tasks'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
@@ -21,6 +22,14 @@ export default function App() {
         element={
           <ProtectedRoute>
             <Dashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/tasks"
+        element={
+          <ProtectedRoute>
+            <Tasks />
           </ProtectedRoute>
         }
       />

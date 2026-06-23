@@ -47,3 +47,10 @@ def authenticate(db: Session, username: str, password: str, ip_address: str | No
 
 def issue_tokens(user: User) -> tuple[str, str]:
     return create_access_token(user.id, user.role), create_refresh_token(user.id, user.role)
+
+
+def list_users(db: Session) -> list[User]:
+    """Lets the frontend populate an assignee picker — any authenticated
+    user can see the directory, there's nothing sensitive in id/username/
+    role beyond what /auth/me already exposes about yourself."""
+    return list(db.scalars(select(User).order_by(User.username)))

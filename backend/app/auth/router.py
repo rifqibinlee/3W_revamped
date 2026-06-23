@@ -34,3 +34,8 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)) -> User:
     return user
+
+
+@router.get("/users", response_model=list[UserOut])
+def list_users(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[User]:
+    return service.list_users(db)
