@@ -173,6 +173,9 @@ export const api = {
 
   currentStatus: () => request<CurrentStatusRow[]>('/analytics/current-status'),
 
+  forecastStatus: (year: number, week: number) =>
+    request<CurrentStatusRow[]>(`/analytics/forecast-status?year=${year}&week=${week}`),
+
   filterOptions: () => request<FilterOptions>('/analytics/filter-options'),
 
   summary: (filters: AnalyticsFilters = {}) => request<SummaryStats>(`/analytics/summary${filterParams(filters)}`),

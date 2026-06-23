@@ -4,6 +4,7 @@ import { AppShell } from './components/AppShell'
 import { useAuth } from './lib/useAuth'
 import { Dashboard } from './pages/Dashboard'
 import { Login } from './pages/Login'
+import { MapPage } from './pages/Map'
 import { Tasks } from './pages/Tasks'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -30,6 +31,14 @@ export default function App() {
         element={
           <ProtectedRoute>
             <Tasks />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/map"
+        element={
+          <ProtectedRoute>
+            <MapPage />
           </ProtectedRoute>
         }
       />
