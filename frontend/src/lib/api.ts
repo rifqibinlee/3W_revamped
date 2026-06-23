@@ -73,7 +73,7 @@ export interface TaskOut {
   creator_id: string
   title: string
   description: string | null
-  assignee_id: string
+  assignee_ids: string[]
   due_date: string
   status: string
   reviewed_by_id: string | null
@@ -81,6 +81,14 @@ export interface TaskOut {
   rejection_reason: string | null
   created_at: string
   updated_at: string
+}
+
+export interface CommentOut {
+  id: string
+  project_id: string
+  author_id: string
+  body: string
+  created_at: string
 }
 
 export interface CurrentStatusRow {
@@ -227,8 +235,10 @@ export const api = {
 
   createTask: (
     projectId: string,
-    input: { title: string; assignee_id: string; due_date: string; description?: string },
+    input: { title: string; assignee_ids: string[]; due_date: string; description?: string },
   ) => request<TaskOut>(`/projects/${projectId}/tasks`, { method: 'POST', body: JSON.stringify(input) }),
+
+  listTasks: (projectId: string) => request<TaskOut[]>(`/tasks/gantt/rows?project_id=${projectId}`),
 
   startTask: (id: string) => request<TaskOut>(`/tasks/${id}/start`, { method: 'POST' }),
 
@@ -240,10 +250,12 @@ export const api = {
     request<TaskOut>(`/tasks/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) }),
 
   addProjectComment: (projectId: string, body: string) =>
-    request<{ id: string; body: string }>(`/projects/${projectId}/comments`, {
+    request<CommentOut>(`/projects/${projectId}/comments`, {
       method: 'POST',
       body: JSON.stringify({ body }),
     }),
+
+  listProjectComments: (projectId: string) => request<CommentOut[]>(`/projects/${projectId}/comments`),
 
   capexPricing: () => request<CapexPricing>('/capex-pricing'),
 

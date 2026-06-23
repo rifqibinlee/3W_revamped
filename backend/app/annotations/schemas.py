@@ -20,7 +20,7 @@ class AnnotationCreate(BaseModel):
 
 class TaskCreate(BaseModel):
     title: str
-    assignee_id: str
+    assignee_ids: list[str]
     due_date: datetime
     description: str | None = None
 
@@ -63,7 +63,7 @@ class TaskOut(BaseModel):
     creator_id: str
     title: str
     description: str | None
-    assignee_id: str
+    assignee_ids: list[str]
     due_date: datetime
     status: str
     reviewed_by_id: str | None

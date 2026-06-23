@@ -6,7 +6,8 @@ import { ParticleBackground } from './ParticleBackground'
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard' },
   { to: '/map', label: 'Map' },
-  { to: '/tasks', label: 'Tasks' },
+  { to: '/notes', label: 'Notes' },
+  { to: '/projects', label: 'Projects' },
   { to: '/chat', label: 'Chat' },
   { to: '/pricing', label: 'CAPEX' },
   { to: '/agent', label: 'Agent' },

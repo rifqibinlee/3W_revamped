@@ -98,15 +98,16 @@ def list_annotations(db: Session, project_id: str) -> list[Annotation]:
 
 
 def create_task(
-    db: Session, project: Project, creator: User, title: str, assignee_id: str, due_date: datetime,
+    db: Session, project: Project, creator: User, title: str, assignee_ids: list[str], due_date: datetime,
     description: str | None = None,
 ) -> Task:
     if not project.assignee_id:
         raise NotAProjectError("cannot create a task under a note — assign the project to someone first")
 
+    assignees = list(db.scalars(select(User).where(User.id.in_(assignee_ids))))
     task = Task(
         project_id=project.id, creator_id=creator.id, title=title, description=description,
-        assignee_id=assignee_id, due_date=due_date, status=TaskStatus.TODO,
+        assignees=assignees, due_date=due_date, status=TaskStatus.TODO,
     )
     db.add(task)
     db.commit()
@@ -119,7 +120,7 @@ def list_tasks(db: Session, project_id: str | None = None, assignee_id: str | No
     if project_id:
         stmt = stmt.where(Task.project_id == project_id)
     if assignee_id:
-        stmt = stmt.where(Task.assignee_id == assignee_id)
+        stmt = stmt.where(Task.assignees.any(User.id == assignee_id))
     return list(db.scalars(stmt))
 
 
@@ -128,9 +129,13 @@ def _require_status(task: Task, expected: str) -> None:
         raise InvalidTransitionError(f"expected status {expected!r}, got {task.status!r}")
 
 
+def _is_assignee(task: Task, actor: User) -> bool:
+    return any(a.id == actor.id for a in task.assignees)
+
+
 def start_progress(db: Session, task: Task, actor: User) -> Task:
-    if task.assignee_id != actor.id:
-        raise PermissionDeniedError("only the assignee can start progress on this task")
+    if not _is_assignee(task, actor):
+        raise PermissionDeniedError("only an assignee can start progress on this task")
     _require_status(task, TaskStatus.TODO)
     task.status = TaskStatus.IN_PROGRESS
     db.commit()
@@ -139,8 +144,8 @@ def start_progress(db: Session, task: Task, actor: User) -> Task:
 
 
 def submit_for_review(db: Session, task: Task, actor: User) -> Task:
-    if task.assignee_id != actor.id:
-        raise PermissionDeniedError("only the assignee can submit this task for review")
+    if not _is_assignee(task, actor):
+        raise PermissionDeniedError("only an assignee can submit this task for review")
     _require_status(task, TaskStatus.IN_PROGRESS)
     task.status = TaskStatus.PENDING_REVIEW
     db.commit()
@@ -150,9 +155,9 @@ def submit_for_review(db: Session, task: Task, actor: User) -> Task:
 
 def _require_reviewer(task: Task, actor: User) -> None:
     """The assigner is whoever created the task, or an admin acting on
-    their behalf — the assignee can never review their own work."""
-    if actor.id == task.assignee_id:
-        raise PermissionDeniedError("the assignee cannot review their own task")
+    their behalf — an assignee can never review their own task."""
+    if _is_assignee(task, actor):
+        raise PermissionDeniedError("an assignee cannot review their own task")
     if task.creator_id != actor.id and actor.role != Role.ADMIN:
         raise PermissionDeniedError("only the task's creator (or an admin) can review it")
 
@@ -189,7 +194,13 @@ def add_comment(db: Session, project: Project, author: User, body: str) -> Proje
     return comment
 
 
-def gantt_rows(db: Session, assignee_id: str | None = None) -> list[Task]:
+def list_comments(db: Session, project_id: str) -> list[ProjectComment]:
+    return list(
+        db.scalars(select(ProjectComment).where(ProjectComment.project_id == project_id).order_by(ProjectComment.created_at))
+    )
+
+
+def gantt_rows(db: Session, assignee_id: str | None = None, project_id: str | None = None) -> list[Task]:
     """Simple due-date timeline, no dependency graph: each row is one
     task spanning created_at -> due_date for its assignee."""
-    return list_tasks(db, assignee_id=assignee_id)
+    return list_tasks(db, project_id=project_id, assignee_id=assignee_id)

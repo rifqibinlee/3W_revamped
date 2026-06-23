@@ -83,7 +83,7 @@ def list_annotations(project_id: str, db: Session = Depends(get_db)) -> list[Ann
 def create_task(project_id: str, payload: TaskCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> Task:
     project = _get_project_or_404(db, project_id)
     return _handle_domain_errors(
-        service.create_task, db, project, user, payload.title, payload.assignee_id, payload.due_date, payload.description,
+        service.create_task, db, project, user, payload.title, payload.assignee_ids, payload.due_date, payload.description,
     )
 
 
@@ -93,9 +93,14 @@ def add_comment(project_id: str, payload: CommentCreate, user: User = Depends(ge
     return service.add_comment(db, project, user, payload.body)
 
 
+@router.get("/projects/{project_id}/comments", response_model=list[CommentOut])
+def list_comments(project_id: str, db: Session = Depends(get_db)):
+    return service.list_comments(db, project_id)
+
+
 @router.get("/tasks/gantt/rows", response_model=list[TaskOut])
-def gantt(assignee_id: str | None = None, db: Session = Depends(get_db)) -> list[Task]:
-    return service.gantt_rows(db, assignee_id)
+def gantt(assignee_id: str | None = None, project_id: str | None = None, db: Session = Depends(get_db)) -> list[Task]:
+    return service.gantt_rows(db, assignee_id, project_id)
 
 
 @router.post("/tasks/{task_id}/start", response_model=TaskOut)

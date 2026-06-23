@@ -1,17 +1,60 @@
 import type { Feature, FeatureCollection, Geometry, Polygon } from 'geojson'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { GlassPanel } from '../components/GlassPanel'
-import { api, ApiError, type AnnotationOut, type CurrentStatusRow, type ProjectOut, type SiteDetail } from '../lib/api'
+import { api, ApiError, type AnnotationOut, type CurrentStatusRow, type SiteDetail, type UserOut } from '../lib/api'
 
 const STYLE_URL = 'https://demotiles.maplibre.org/style.json'
 const DEFAULT_CENTER: [number, number] = [101.5, 3.1]
 const DEFAULT_ZOOM = 11
 
 type DrawTool = 'none' | 'point' | 'line' | 'polygon' | 'buffer'
+type AnnotationMode = 'note' | 'project'
 
 const QUARTER_WEEKS = [13, 26, 39, 52]
+
+const DRAW_TOOLS: { tool: DrawTool; label: string; icon: ReactElement }[] = [
+  {
+    tool: 'point',
+    label: 'Point',
+    icon: (
+      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+        <circle cx="12" cy="12" r="4" fill="currentColor" />
+      </svg>
+    ),
+  },
+  {
+    tool: 'line',
+    label: 'Line',
+    icon: (
+      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+        <circle cx="5" cy="19" r="2" fill="currentColor" />
+        <circle cx="19" cy="5" r="2" fill="currentColor" />
+        <line x1="6.5" y1="17.5" x2="17.5" y2="6.5" />
+      </svg>
+    ),
+  },
+  {
+    tool: 'polygon',
+    label: 'Polygon',
+    icon: (
+      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+        <polygon points="12,3 21,9 17,21 7,21 3,9" />
+      </svg>
+    ),
+  },
+  {
+    tool: 'buffer',
+    label: 'Buffer',
+    icon: (
+      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+        <circle cx="12" cy="12" r="3" fill="currentColor" />
+        <circle cx="12" cy="12" r="8" strokeDasharray="3 3" />
+      </svg>
+    ),
+  },
+]
 
 function statusGeoJson(rows: CurrentStatusRow[]): FeatureCollection {
   return {
@@ -209,22 +252,26 @@ export function MapPage() {
   const [forecastYear, setForecastYear] = useState(new Date().getFullYear())
   const [forecastWeek, setForecastWeek] = useState(13)
 
-  const [projects, setProjects] = useState<ProjectOut[]>([])
-  const [selectedProjectId, setSelectedProjectId] = useState('')
+  const [users, setUsers] = useState<UserOut[]>([])
   const [tool, setTool] = useState<DrawTool>('none')
+  const [drawMenuOpen, setDrawMenuOpen] = useState(false)
   const [draftPoints, setDraftPoints] = useState<[number, number][]>([])
   const [status, setStatus] = useState<string | null>(null)
-  const [annotationsVersion, setAnnotationsVersion] = useState(0)
 
-  // In-app dialogs replacing window.prompt — buffer needs a radius before
-  // the geometry even exists, point/line/polygon just need a label.
+  // In-app dialog replacing window.prompt — buffer needs a radius before the
+  // geometry even exists; once geometry is ready, drawing creates a brand
+  // new note or project right there (toggle between the two), not an
+  // annotation under some pre-existing project.
   const [pendingBufferCenter, setPendingBufferCenter] = useState<[number, number] | null>(null)
   const [pendingGeometry, setPendingGeometry] = useState<Geometry | null>(null)
-  const [labelInput, setLabelInput] = useState('')
+  const [annotationMode, setAnnotationMode] = useState<AnnotationMode>('note')
+  const [titleInput, setTitleInput] = useState('')
+  const [descriptionInput, setDescriptionInput] = useState('')
+  const [assigneeIdInput, setAssigneeIdInput] = useState('')
   const [radiusInput, setRadiusInput] = useState('200')
 
   useEffect(() => {
-    api.listProjects().then(setProjects).catch(() => undefined)
+    api.listUsers().then(setUsers).catch(() => undefined)
   }, [])
 
   // Single map (non-split mode)
@@ -308,16 +355,14 @@ export function MapPage() {
       .catch(() => undefined)
   }, [forecastYear, forecastWeek, splitActive])
 
-  // Render the selected project's saved annotations, reloading whenever the
-  // project changes or a new one is added
+  // Render newly created annotations as they're saved, accumulating across
+  // the session so the map fills up as the user keeps drawing
+  const [createdAnnotations, setCreatedAnnotations] = useState<AnnotationOut[]>([])
   useEffect(() => {
     const map = mapRef.current
-    if (!map || splitActive || !selectedProjectId) return
-    api
-      .listAnnotations(selectedProjectId)
-      .then((rows) => addAnnotationsLayer(map, rows))
-      .catch(() => undefined)
-  }, [selectedProjectId, annotationsVersion, splitActive])
+    if (!map || splitActive) return
+    addAnnotationsLayer(map, createdAnnotations)
+  }, [createdAnnotations, splitActive])
 
   // Drawing tool: wire click handlers on the active (non-split) map
   useEffect(() => {
@@ -328,13 +373,12 @@ export function MapPage() {
       const coord: [number, number] = [e.lngLat.lng, e.lngLat.lat]
 
       if (tool === 'point') {
-        setLabelInput('')
+        resetDialogFields()
         setPendingGeometry({ type: 'Point', coordinates: coord })
         return
       }
       if (tool === 'buffer') {
-        setLabelInput('')
-        setRadiusInput('200')
+        resetDialogFields()
         setPendingBufferCenter(coord)
         return
       }
@@ -387,24 +431,41 @@ export function MapPage() {
     else map.once('load', apply)
   }, [draftPoints, tool])
 
-  async function finishAnnotation(geometry: Geometry, label: string) {
-    if (!selectedProjectId) {
-      setStatus('Pick a note/project first')
+  function resetDialogFields() {
+    setAnnotationMode('note')
+    setTitleInput('')
+    setDescriptionInput('')
+    setAssigneeIdInput('')
+    setRadiusInput('200')
+  }
+
+  async function createNoteOrProjectWithAnnotation(geometry: Geometry) {
+    if (!titleInput.trim()) {
+      setStatus('Title is required')
+      return
+    }
+    if (annotationMode === 'project' && !assigneeIdInput) {
+      setStatus('Pick an assignee for the project')
       return
     }
     try {
-      await api.addAnnotation(selectedProjectId, geometry as unknown as Record<string, unknown>, label || undefined)
-      setStatus('Annotation added')
-      setAnnotationsVersion((v) => v + 1)
+      const project = await api.createProject({
+        title: titleInput.trim(),
+        description: descriptionInput.trim() || undefined,
+        assignee_id: annotationMode === 'project' ? assigneeIdInput : undefined,
+      })
+      const annotation = await api.addAnnotation(project.id, geometry as unknown as Record<string, unknown>, titleInput.trim())
+      setCreatedAnnotations((prev) => [...prev, annotation])
+      setStatus(`${annotationMode === 'project' ? 'Project' : 'Note'} created`)
       setDraftPoints([])
       setTool('none')
     } catch (err) {
-      setStatus(err instanceof ApiError ? err.message : 'Could not add annotation')
+      setStatus(err instanceof ApiError ? err.message : 'Could not create annotation')
     }
   }
 
   function finishDraft() {
-    setLabelInput('')
+    resetDialogFields()
     if (tool === 'line' && draftPoints.length >= 2) {
       setPendingGeometry({ type: 'LineString', coordinates: draftPoints })
     } else if (tool === 'polygon' && draftPoints.length >= 3) {
@@ -412,9 +473,9 @@ export function MapPage() {
     }
   }
 
-  function confirmLabelDialog() {
+  function confirmGeometryDialog() {
     if (pendingGeometry) {
-      finishAnnotation(pendingGeometry, labelInput.trim())
+      createNoteOrProjectWithAnnotation(pendingGeometry)
       setPendingGeometry(null)
     }
   }
@@ -426,7 +487,7 @@ export function MapPage() {
       setStatus('Enter a valid radius in meters')
       return
     }
-    finishAnnotation(circlePolygon(pendingBufferCenter, radius), labelInput.trim())
+    createNoteOrProjectWithAnnotation(circlePolygon(pendingBufferCenter, radius))
     setPendingBufferCenter(null)
   }
 
@@ -486,44 +547,52 @@ export function MapPage() {
 
         {!splitActive && (
           <>
-            <div className="min-w-[180px]">
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
-                Note/project
-              </label>
-              <select
-                value={selectedProjectId}
-                onChange={(e) => setSelectedProjectId(e.target.value)}
-                className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
-              >
-                <option value="" className="bg-ink-900">
-                  Select…
-                </option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id} className="bg-ink-900">
-                    {p.title}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
+            <div className="relative">
               <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">Draw</p>
-              <div className="flex gap-1.5">
-                {(['point', 'line', 'polygon', 'buffer'] as DrawTool[]).map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => {
-                      setDraftPoints([])
-                      setTool((cur) => (cur === t ? 'none' : t))
-                    }}
-                    className={`rounded-lg px-3 py-2 text-xs font-semibold capitalize ${
-                      tool === t ? 'bg-sky-400 text-ink-900' : 'border border-white/20 text-white/70'
-                    }`}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
+              <button
+                onClick={() => setDrawMenuOpen((v) => !v)}
+                title="Draw an annotation"
+                className={`flex h-9 w-9 items-center justify-center rounded-xl ${
+                  tool !== 'none' ? 'bg-sky-400 text-ink-900' : 'border border-white/20 text-white/80'
+                }`}
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+              </button>
+
+              {drawMenuOpen && (
+                <div className="absolute left-0 top-full z-20 mt-2 flex gap-1.5 rounded-2xl border border-white/15 bg-ink-900/95 p-2 backdrop-blur-xl">
+                  {DRAW_TOOLS.map(({ tool: t, label, icon }) => (
+                    <button
+                      key={t}
+                      title={label}
+                      onClick={() => {
+                        setDraftPoints([])
+                        setTool(t)
+                        setDrawMenuOpen(false)
+                      }}
+                      className={`flex h-9 w-9 items-center justify-center rounded-xl ${
+                        tool === t ? 'bg-sky-400 text-ink-900' : 'text-white/80 hover:bg-white/10'
+                      }`}
+                    >
+                      {icon}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
+            {tool !== 'none' && (
+              <button
+                onClick={() => {
+                  setTool('none')
+                  setDraftPoints([])
+                }}
+                className="rounded-xl border border-white/20 px-3 py-2 text-xs font-semibold text-white/70"
+              >
+                Cancel draw
+              </button>
+            )}
             {(tool === 'line' || tool === 'polygon') && (
               <button
                 onClick={finishDraft}
@@ -563,8 +632,27 @@ export function MapPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/60 backdrop-blur-sm">
           <GlassPanel className="w-full max-w-sm">
             <p className="mb-3.5 font-display text-sm font-semibold">
-              {pendingBufferCenter ? 'Buffer annotation' : 'Label this annotation'}
+              {pendingBufferCenter ? 'New buffer annotation' : 'New annotation'}
             </p>
+
+            <div className="mb-3 flex gap-1.5">
+              <button
+                onClick={() => setAnnotationMode('note')}
+                className={`flex-1 rounded-xl px-3 py-2 text-xs font-semibold ${
+                  annotationMode === 'note' ? 'bg-sky-400 text-ink-900' : 'border border-white/20 text-white/70'
+                }`}
+              >
+                Note
+              </button>
+              <button
+                onClick={() => setAnnotationMode('project')}
+                className={`flex-1 rounded-xl px-3 py-2 text-xs font-semibold ${
+                  annotationMode === 'project' ? 'bg-sky-400 text-ink-900' : 'border border-white/20 text-white/70'
+                }`}
+              >
+                Project
+              </button>
+            </div>
 
             {pendingBufferCenter && (
               <div className="mb-3">
@@ -581,23 +669,50 @@ export function MapPage() {
               </div>
             )}
 
-            <div>
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
-                Label (optional)
-              </label>
+            <div className="mb-3">
+              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">Title</label>
               <input
                 type="text"
                 autoFocus={!pendingBufferCenter}
-                value={labelInput}
-                onChange={(e) => setLabelInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    if (pendingBufferCenter) confirmBufferDialog()
-                    else confirmLabelDialog()
-                  }
-                  if (e.key === 'Escape') cancelDialog()
-                }}
+                value={titleInput}
+                onChange={(e) => setTitleInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Escape' && cancelDialog()}
                 placeholder="e.g. New antenna pole"
+                className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
+              />
+            </div>
+
+            {annotationMode === 'project' && (
+              <div className="mb-3">
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
+                  Assignee
+                </label>
+                <select
+                  value={assigneeIdInput}
+                  onChange={(e) => setAssigneeIdInput(e.target.value)}
+                  className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
+                >
+                  <option value="" className="bg-ink-900">
+                    Select…
+                  </option>
+                  {users.map((u) => (
+                    <option key={u.id} value={u.id} className="bg-ink-900">
+                      {u.username}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div>
+              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
+                Description
+              </label>
+              <textarea
+                value={descriptionInput}
+                onChange={(e) => setDescriptionInput(e.target.value)}
+                rows={3}
+                placeholder={annotationMode === 'project' ? 'Project description' : 'Note description'}
                 className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
               />
             </div>
@@ -610,7 +725,7 @@ export function MapPage() {
                 Cancel
               </button>
               <button
-                onClick={pendingBufferCenter ? confirmBufferDialog : confirmLabelDialog}
+                onClick={pendingBufferCenter ? confirmBufferDialog : confirmGeometryDialog}
                 className="rounded-xl bg-gradient-to-r from-accent-400 to-accent-500 px-4 py-2 text-sm font-semibold text-ink-900"
               >
                 Save

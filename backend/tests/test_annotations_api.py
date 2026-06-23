@@ -52,7 +52,7 @@ def test_cannot_create_task_under_note_via_api(client) -> None:
 
     resp = client.post(
         f"/projects/{project_id}/tasks",
-        json={"title": "Do something", "assignee_id": me_id, "due_date": "2026-12-31T00:00:00Z"},
+        json={"title": "Do something", "assignee_ids": [me_id], "due_date": "2026-12-31T00:00:00Z"},
         headers=headers,
     )
     assert resp.status_code == 409
@@ -69,12 +69,13 @@ def test_full_task_lifecycle_via_api(client) -> None:
 
     create_resp = client.post(
         f"/projects/{project_id}/tasks",
-        json={"title": "Climb tower", "assignee_id": assignee_id, "due_date": "2026-12-31T00:00:00Z"},
+        json={"title": "Climb tower", "assignee_ids": [assignee_id], "due_date": "2026-12-31T00:00:00Z"},
         headers=creator_headers,
     )
     assert create_resp.status_code == 201
     task_id = create_resp.json()["id"]
     assert create_resp.json()["status"] == "todo"
+    assert create_resp.json()["assignee_ids"] == [assignee_id]
 
     start_resp = client.post(f"/tasks/{task_id}/start", headers=assignee_headers)
     assert start_resp.status_code == 200
@@ -103,7 +104,7 @@ def test_gantt_endpoint_lists_tasks(client) -> None:
     ).json()["id"]
     client.post(
         f"/projects/{project_id}/tasks",
-        json={"title": "Real task", "assignee_id": assignee_id, "due_date": "2026-12-31T00:00:00Z"},
+        json={"title": "Real task", "assignee_ids": [assignee_id], "due_date": "2026-12-31T00:00:00Z"},
         headers=creator_headers,
     )
 
@@ -111,3 +112,15 @@ def test_gantt_endpoint_lists_tasks(client) -> None:
     assert resp.status_code == 200
     titles = [row["title"] for row in resp.json()]
     assert titles == ["Real task"]
+
+
+def test_comments_listed_in_order_via_api(client) -> None:
+    headers = _register_and_login(client, "alice_comments_api")
+    project_id = client.post("/projects", json={"title": "Note with comments"}, headers=headers).json()["id"]
+
+    client.post(f"/projects/{project_id}/comments", json={"body": "first"}, headers=headers)
+    client.post(f"/projects/{project_id}/comments", json={"body": "second"}, headers=headers)
+
+    resp = client.get(f"/projects/{project_id}/comments")
+    assert resp.status_code == 200
+    assert [c["body"] for c in resp.json()] == ["first", "second"]

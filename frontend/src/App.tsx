@@ -5,7 +5,8 @@ import { useAuth } from './lib/useAuth'
 import { Dashboard } from './pages/Dashboard'
 import { Login } from './pages/Login'
 import { MapPage } from './pages/Map'
-import { Tasks } from './pages/Tasks'
+import { Notes } from './pages/Notes'
+import { Projects } from './pages/Projects'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
@@ -27,10 +28,18 @@ export default function App() {
         }
       />
       <Route
-        path="/tasks"
+        path="/notes"
         element={
           <ProtectedRoute>
-            <Tasks />
+            <Notes />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/projects"
+        element={
+          <ProtectedRoute>
+            <Projects />
           </ProtectedRoute>
         }
       />

@@ -73,7 +73,7 @@ def test_cannot_create_task_under_a_note(db_session) -> None:
     note = service.create_project(db_session, creator, "Just a note")
 
     try:
-        service.create_task(db_session, note, creator, "Do something", assignee.id, _due())
+        service.create_task(db_session, note, creator, "Do something", [assignee.id], _due())
         assert False, "expected NotAProjectError"
     except service.NotAProjectError:
         pass
@@ -84,7 +84,7 @@ def test_create_task_under_a_project(db_session) -> None:
     assignee = _user(db_session, "assignee_task1")
     project = service.create_project(db_session, creator, "Fix antenna", assignee_id=assignee.id)
 
-    task = service.create_task(db_session, project, creator, "Climb tower", assignee.id, _due())
+    task = service.create_task(db_session, project, creator, "Climb tower", [assignee.id], _due())
     assert task.status == TaskStatus.TODO
     assert task.project_id == project.id
 
@@ -93,7 +93,7 @@ def test_full_happy_path_to_done(db_session) -> None:
     creator = _user(db_session, "creator4")
     assignee = _user(db_session, "assignee4")
     project = service.create_project(db_session, creator, "Repair project", assignee_id=assignee.id)
-    task = service.create_task(db_session, project, creator, "Repair", assignee.id, _due())
+    task = service.create_task(db_session, project, creator, "Repair", [assignee.id], _due())
 
     task = service.start_progress(db_session, task, assignee)
     assert task.status == TaskStatus.IN_PROGRESS
@@ -110,7 +110,7 @@ def test_reject_sends_task_back_to_in_progress_with_reason(db_session) -> None:
     creator = _user(db_session, "creator5")
     assignee = _user(db_session, "assignee5")
     project = service.create_project(db_session, creator, "Repair project", assignee_id=assignee.id)
-    task = service.create_task(db_session, project, creator, "Repair", assignee.id, _due())
+    task = service.create_task(db_session, project, creator, "Repair", [assignee.id], _due())
     task = service.start_progress(db_session, task, assignee)
     task = service.submit_for_review(db_session, task, assignee)
 
@@ -123,7 +123,7 @@ def test_assignee_cannot_approve_own_task(db_session) -> None:
     creator = _user(db_session, "creator6")
     assignee = _user(db_session, "assignee6")
     project = service.create_project(db_session, creator, "Repair project", assignee_id=assignee.id)
-    task = service.create_task(db_session, project, creator, "Repair", assignee.id, _due())
+    task = service.create_task(db_session, project, creator, "Repair", [assignee.id], _due())
     task = service.start_progress(db_session, task, assignee)
     task = service.submit_for_review(db_session, task, assignee)
 
@@ -139,7 +139,7 @@ def test_non_creator_non_admin_cannot_approve(db_session) -> None:
     assignee = _user(db_session, "assignee7")
     bystander = _user(db_session, "bystander7")
     project = service.create_project(db_session, creator, "Repair project", assignee_id=assignee.id)
-    task = service.create_task(db_session, project, creator, "Repair", assignee.id, _due())
+    task = service.create_task(db_session, project, creator, "Repair", [assignee.id], _due())
     task = service.start_progress(db_session, task, assignee)
     task = service.submit_for_review(db_session, task, assignee)
 
@@ -155,7 +155,7 @@ def test_admin_can_approve_even_if_not_creator(db_session) -> None:
     assignee = _user(db_session, "assignee8")
     admin = _user(db_session, "admin8", role=Role.ADMIN)
     project = service.create_project(db_session, creator, "Repair project", assignee_id=assignee.id)
-    task = service.create_task(db_session, project, creator, "Repair", assignee.id, _due())
+    task = service.create_task(db_session, project, creator, "Repair", [assignee.id], _due())
     task = service.start_progress(db_session, task, assignee)
     task = service.submit_for_review(db_session, task, assignee)
 
@@ -167,7 +167,7 @@ def test_cannot_approve_a_task_thats_still_todo(db_session) -> None:
     creator = _user(db_session, "creator9")
     assignee = _user(db_session, "assignee9")
     project = service.create_project(db_session, creator, "Repair project", assignee_id=assignee.id)
-    task = service.create_task(db_session, project, creator, "Repair", assignee.id, _due())
+    task = service.create_task(db_session, project, creator, "Repair", [assignee.id], _due())
 
     try:
         service.approve(db_session, task, creator)
@@ -180,7 +180,7 @@ def test_only_assignee_can_start_progress(db_session) -> None:
     creator = _user(db_session, "creator10")
     assignee = _user(db_session, "assignee10")
     project = service.create_project(db_session, creator, "Repair project", assignee_id=assignee.id)
-    task = service.create_task(db_session, project, creator, "Repair", assignee.id, _due())
+    task = service.create_task(db_session, project, creator, "Repair", [assignee.id], _due())
 
     try:
         service.start_progress(db_session, task, creator)
@@ -193,7 +193,7 @@ def test_gantt_rows_lists_tasks(db_session) -> None:
     creator = _user(db_session, "creator11")
     assignee = _user(db_session, "assignee11")
     project = service.create_project(db_session, creator, "Project", assignee_id=assignee.id)
-    service.create_task(db_session, project, creator, "A real task", assignee.id, _due())
+    service.create_task(db_session, project, creator, "A real task", [assignee.id], _due())
 
     rows = service.gantt_rows(db_session)
     assert len(rows) == 1
@@ -205,12 +205,49 @@ def test_gantt_rows_filters_by_assignee(db_session) -> None:
     alice = _user(db_session, "alice11b")
     bob = _user(db_session, "bob11b")
     project = service.create_project(db_session, creator, "Project", assignee_id=alice.id)
-    service.create_task(db_session, project, creator, "Alice's task", alice.id, _due())
-    service.create_task(db_session, project, creator, "Bob's task", bob.id, _due())
+    service.create_task(db_session, project, creator, "Alice's task", [alice.id], _due())
+    service.create_task(db_session, project, creator, "Bob's task", [bob.id], _due())
 
     rows = service.gantt_rows(db_session, assignee_id=alice.id)
     assert len(rows) == 1
     assert rows[0].title == "Alice's task"
+
+
+def test_task_can_have_multiple_assignees(db_session) -> None:
+    creator = _user(db_session, "creator13")
+    alice = _user(db_session, "alice13")
+    bob = _user(db_session, "bob13")
+    project = service.create_project(db_session, creator, "Project", assignee_id=alice.id)
+    task = service.create_task(db_session, project, creator, "Joint task", [alice.id, bob.id], _due())
+
+    assert {a.id for a in task.assignees} == {alice.id, bob.id}
+
+    # either assignee can act on the shared task
+    task = service.start_progress(db_session, task, bob)
+    assert task.status == TaskStatus.IN_PROGRESS
+
+
+def test_gantt_rows_filters_by_assignee_with_multiple_assignees(db_session) -> None:
+    creator = _user(db_session, "creator13b")
+    alice = _user(db_session, "alice13b")
+    bob = _user(db_session, "bob13b")
+    project = service.create_project(db_session, creator, "Project", assignee_id=alice.id)
+    service.create_task(db_session, project, creator, "Joint task", [alice.id, bob.id], _due())
+
+    assert len(service.gantt_rows(db_session, assignee_id=alice.id)) == 1
+    assert len(service.gantt_rows(db_session, assignee_id=bob.id)) == 1
+
+
+def test_gantt_rows_filters_by_project(db_session) -> None:
+    creator = _user(db_session, "creator13c")
+    alice = _user(db_session, "alice13c")
+    project_a = service.create_project(db_session, creator, "Project A", assignee_id=alice.id)
+    project_b = service.create_project(db_session, creator, "Project B", assignee_id=alice.id)
+    service.create_task(db_session, project_a, creator, "A's task", [alice.id], _due())
+    service.create_task(db_session, project_b, creator, "B's task", [alice.id], _due())
+
+    rows = service.gantt_rows(db_session, project_id=project_a.id)
+    assert [r.title for r in rows] == ["A's task"]
 
 
 def test_add_comment_at_project_level(db_session) -> None:
@@ -219,3 +256,13 @@ def test_add_comment_at_project_level(db_session) -> None:
     comment = service.add_comment(db_session, project, creator, "looks fine")
     assert comment.body == "looks fine"
     assert comment.project_id == project.id
+
+
+def test_list_comments_returns_in_chronological_order(db_session) -> None:
+    creator = _user(db_session, "creator14")
+    project = service.create_project(db_session, creator, "Note")
+    service.add_comment(db_session, project, creator, "first")
+    service.add_comment(db_session, project, creator, "second")
+
+    comments = service.list_comments(db_session, project.id)
+    assert [c.body for c in comments] == ["first", "second"]

@@ -1,10 +1,18 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, String, Table, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.auth.models import User
 from app.core.db import Base
+
+task_assignees = Table(
+    "task_assignees",
+    Base.metadata,
+    Column("task_id", ForeignKey("tasks.id"), primary_key=True),
+    Column("user_id", ForeignKey("users.id"), primary_key=True),
+)
 
 
 def _uuid() -> str:
@@ -70,7 +78,11 @@ class Annotation(Base):
 class Task(Base):
     """A work item inside a Project. Only projects (assignee_id set) can
     have tasks — there's no one to delegate a note's work to, so creating
-    a task under a note is rejected at the service layer."""
+    a task under a note is rejected at the service layer.
+
+    Tasks can be assigned to multiple people (e.g. a survey needing both
+    a field tech and a planner) — `assignees` is a many-to-many via
+    task_assignees, not a single FK."""
 
     __tablename__ = "tasks"
 
@@ -80,9 +92,13 @@ class Task(Base):
     title: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    assignee_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    assignees: Mapped[list[User]] = relationship(User, secondary=task_assignees)
     due_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(20), default=TaskStatus.TODO)
+
+    @property
+    def assignee_ids(self) -> list[str]:
+        return [a.id for a in self.assignees]
 
     reviewed_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
