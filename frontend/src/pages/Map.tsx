@@ -216,6 +216,13 @@ export function MapPage() {
   const [status, setStatus] = useState<string | null>(null)
   const [annotationsVersion, setAnnotationsVersion] = useState(0)
 
+  // In-app dialogs replacing window.prompt — buffer needs a radius before
+  // the geometry even exists, point/line/polygon just need a label.
+  const [pendingBufferCenter, setPendingBufferCenter] = useState<[number, number] | null>(null)
+  const [pendingGeometry, setPendingGeometry] = useState<Geometry | null>(null)
+  const [labelInput, setLabelInput] = useState('')
+  const [radiusInput, setRadiusInput] = useState('200')
+
   useEffect(() => {
     api.listProjects().then(setProjects).catch(() => undefined)
   }, [])
@@ -321,15 +328,14 @@ export function MapPage() {
       const coord: [number, number] = [e.lngLat.lng, e.lngLat.lat]
 
       if (tool === 'point') {
-        finishAnnotation({ type: 'Point', coordinates: coord })
+        setLabelInput('')
+        setPendingGeometry({ type: 'Point', coordinates: coord })
         return
       }
       if (tool === 'buffer') {
-        const radiusStr = window.prompt('Buffer radius in meters?', '200')
-        if (!radiusStr) return
-        const radius = Number(radiusStr)
-        if (!Number.isFinite(radius) || radius <= 0) return
-        finishAnnotation(circlePolygon(coord, radius))
+        setLabelInput('')
+        setRadiusInput('200')
+        setPendingBufferCenter(coord)
         return
       }
       // line / polygon: accumulate points
@@ -381,12 +387,11 @@ export function MapPage() {
     else map.once('load', apply)
   }, [draftPoints, tool])
 
-  async function finishAnnotation(geometry: Geometry) {
+  async function finishAnnotation(geometry: Geometry, label: string) {
     if (!selectedProjectId) {
       setStatus('Pick a note/project first')
       return
     }
-    const label = window.prompt('Label for this annotation? (optional)') ?? undefined
     try {
       await api.addAnnotation(selectedProjectId, geometry as unknown as Record<string, unknown>, label || undefined)
       setStatus('Annotation added')
@@ -399,11 +404,35 @@ export function MapPage() {
   }
 
   function finishDraft() {
+    setLabelInput('')
     if (tool === 'line' && draftPoints.length >= 2) {
-      finishAnnotation({ type: 'LineString', coordinates: draftPoints })
+      setPendingGeometry({ type: 'LineString', coordinates: draftPoints })
     } else if (tool === 'polygon' && draftPoints.length >= 3) {
-      finishAnnotation({ type: 'Polygon', coordinates: [[...draftPoints, draftPoints[0]]] })
+      setPendingGeometry({ type: 'Polygon', coordinates: [[...draftPoints, draftPoints[0]]] })
     }
+  }
+
+  function confirmLabelDialog() {
+    if (pendingGeometry) {
+      finishAnnotation(pendingGeometry, labelInput.trim())
+      setPendingGeometry(null)
+    }
+  }
+
+  function confirmBufferDialog() {
+    if (!pendingBufferCenter) return
+    const radius = Number(radiusInput)
+    if (!Number.isFinite(radius) || radius <= 0) {
+      setStatus('Enter a valid radius in meters')
+      return
+    }
+    finishAnnotation(circlePolygon(pendingBufferCenter, radius), labelInput.trim())
+    setPendingBufferCenter(null)
+  }
+
+  function cancelDialog() {
+    setPendingGeometry(null)
+    setPendingBufferCenter(null)
   }
 
   return (
@@ -527,6 +556,67 @@ export function MapPage() {
             </div>
             <div ref={splitRightRef} className="h-full w-full" />
           </div>
+        </div>
+      )}
+
+      {(pendingGeometry || pendingBufferCenter) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/60 backdrop-blur-sm">
+          <GlassPanel className="w-full max-w-sm">
+            <p className="mb-3.5 font-display text-sm font-semibold">
+              {pendingBufferCenter ? 'Buffer annotation' : 'Label this annotation'}
+            </p>
+
+            {pendingBufferCenter && (
+              <div className="mb-3">
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
+                  Radius (meters)
+                </label>
+                <input
+                  type="number"
+                  autoFocus
+                  value={radiusInput}
+                  onChange={(e) => setRadiusInput(e.target.value)}
+                  className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
+                Label (optional)
+              </label>
+              <input
+                type="text"
+                autoFocus={!pendingBufferCenter}
+                value={labelInput}
+                onChange={(e) => setLabelInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    if (pendingBufferCenter) confirmBufferDialog()
+                    else confirmLabelDialog()
+                  }
+                  if (e.key === 'Escape') cancelDialog()
+                }}
+                placeholder="e.g. New antenna pole"
+                className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
+              />
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={cancelDialog}
+                className="rounded-xl border border-white/20 px-4 py-2 text-sm font-semibold text-white/75"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={pendingBufferCenter ? confirmBufferDialog : confirmLabelDialog}
+                className="rounded-xl bg-gradient-to-r from-accent-400 to-accent-500 px-4 py-2 text-sm font-semibold text-ink-900"
+              >
+                Save
+              </button>
+            </div>
+          </GlassPanel>
         </div>
       )}
     </div>
