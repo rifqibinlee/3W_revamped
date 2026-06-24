@@ -211,10 +211,17 @@ export interface MapStats {
   total_capex: number
 }
 
+export interface WorstCongestedSector {
+  zoom_sector_id: string
+  region: string
+  congested_weeks: number
+}
+
 export interface OverviewStats {
   total_sites: number
   total_congested_sites: number
   total_capex: number
+  worst_congested_sector: WorstCongestedSector | null
   worst_ookla_cluster: CoverageHoleSummary | null
   worst_mr_cluster: CoverageHoleSummary | null
 }

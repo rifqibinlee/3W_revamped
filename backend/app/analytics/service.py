@@ -537,12 +537,13 @@ def overview_stats() -> dict:
     if not congestion_path.exists() and not holes_path.exists() and not capex_files:
         return {
             "total_sites": 0, "total_congested_sites": 0, "total_capex": 0.0,
-            "worst_ookla_cluster": None, "worst_mr_cluster": None,
+            "worst_congested_sector": None, "worst_ookla_cluster": None, "worst_mr_cluster": None,
         }
 
     con = get_connection()
     try:
         total_sites = total_congested = 0
+        worst_congested_sector = None
         if congestion_path.exists():
             row = con.execute(f"""
                 WITH latest AS (
@@ -554,6 +555,23 @@ def overview_stats() -> dict:
                 FROM latest WHERE rn = 1
             """).fetchone()
             total_sites, total_congested = row[0] or 0, row[1] or 0
+
+            # "Worst" = most persistently congested sector, i.e. the most
+            # weeks spent over the congestion threshold — not just currently
+            # congested, since a sector congested for 1 week is a different
+            # problem than one congested for 10.
+            worst_row = con.execute(f"""
+                SELECT zoom_sector_id, region, max(congested_weeks) AS weeks
+                FROM read_parquet('{congestion_path}')
+                WHERE congested_weeks IS NOT NULL
+                GROUP BY zoom_sector_id, region
+                ORDER BY weeks DESC
+                LIMIT 1
+            """).fetchone()
+            if worst_row and worst_row[2]:
+                worst_congested_sector = {
+                    "zoom_sector_id": worst_row[0], "region": worst_row[1], "congested_weeks": worst_row[2],
+                }
 
         total_capex = 0.0
         if capex_files:
@@ -583,6 +601,7 @@ def overview_stats() -> dict:
 
         return {
             "total_sites": total_sites, "total_congested_sites": total_congested, "total_capex": total_capex,
+            "worst_congested_sector": worst_congested_sector,
             "worst_ookla_cluster": worst_cluster("Ookla"), "worst_mr_cluster": worst_cluster("MR"),
         }
     finally:

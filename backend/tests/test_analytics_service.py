@@ -380,16 +380,22 @@ def test_overview_stats_returns_empty_when_no_data(tmp_path, monkeypatch) -> Non
     stats = service.overview_stats()
     assert stats == {
         "total_sites": 0, "total_congested_sites": 0, "total_capex": 0.0,
-        "worst_ookla_cluster": None, "worst_mr_cluster": None,
+        "worst_congested_sector": None, "worst_ookla_cluster": None, "worst_mr_cluster": None,
     }
 
 
 def test_overview_stats_aggregates_network_wide(tmp_path, monkeypatch) -> None:
     _setup(tmp_path, monkeypatch)
-    _write_congestion_fixture(tmp_path, [
-        ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 10.0, 10, 2026),
-        ("SITE002", "SITE002_Macro_1", "Southern", "C2", "Digi", False, 20.0, 10, 2026),
-    ])
+    _write_parquet(
+        tmp_path / "congestion_analysis.parquet",
+        [
+            ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 10.0, 10, 2026, 2),
+            ("SITE002", "SITE002_Macro_1", "Southern", "C2", "Digi", False, 20.0, 10, 2026, 0),
+            ("SITE001", "SITE001_Macro_2", "Central", "C1", "Celcom", True, 5.0, 10, 2026, 7),
+        ],
+        ("site_id", "zoom_sector_id", "region", "cluster", "operator", "congested",
+         "eric_data_volume_ul_dl", "week", "year", "congested_weeks"),
+    )
     _write_parquet(
         tmp_path / "capex_upgrades_pre_capex.parquet",
         [("SITE001_Macro_1", "Case 3", 50000.0)],
@@ -409,6 +415,7 @@ def test_overview_stats_aggregates_network_wide(tmp_path, monkeypatch) -> None:
     assert stats["total_sites"] == 2
     assert stats["total_congested_sites"] == 1
     assert stats["total_capex"] == 50000.0
+    assert stats["worst_congested_sector"] == {"zoom_sector_id": "SITE001_Macro_2", "region": "Central", "congested_weeks": 7}
     assert stats["worst_ookla_cluster"] == {"cluster_id": 0, "data_source": "Ookla", "point_count": 2, "avg_signal": -115.5}
     assert stats["worst_mr_cluster"] == {"cluster_id": 5, "data_source": "MR", "point_count": 1, "avg_signal": -112.0}
 

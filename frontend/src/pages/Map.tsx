@@ -96,6 +96,32 @@ function circlePolygon(center: [number, number], radiusMeters: number): Polygon 
   return { type: 'Polygon', coordinates: [coords] }
 }
 
+const EARTH_RADIUS_M = 6371000
+
+function haversineDistanceMeters([lng1, lat1]: [number, number], [lng2, lat2]: [number, number]): number {
+  const toRad = (d: number) => (d * Math.PI) / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLng = toRad(lng2 - lng1)
+  const a =
+    Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
+  return 2 * EARTH_RADIUS_M * Math.asin(Math.sqrt(a))
+}
+
+// Initial bearing along the great-circle path from point 1 to point 2,
+// 0-360 degrees clockwise from true north.
+function bearingDegrees([lng1, lat1]: [number, number], [lng2, lat2]: [number, number]): number {
+  const toRad = (d: number) => (d * Math.PI) / 180
+  const y = Math.sin(toRad(lng2 - lng1)) * Math.cos(toRad(lat2))
+  const x =
+    Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+    Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lng2 - lng1))
+  return (Math.atan2(y, x) * 180) / Math.PI < 0 ? (Math.atan2(y, x) * 180) / Math.PI + 360 : (Math.atan2(y, x) * 180) / Math.PI
+}
+
+function fmtDistance(meters: number): string {
+  return meters >= 1000 ? `${(meters / 1000).toFixed(2)} km` : `${meters.toFixed(0)} m`
+}
+
 function fmt(n: number | null | undefined, digits = 1): string {
   return n == null || Number.isNaN(n) ? '—' : n.toFixed(digits)
 }
@@ -152,42 +178,92 @@ function siteDetailHtml(siteId: string, detail: SiteDetail | null, loading: bool
     </div>`
 }
 
+// Two separate clustered sources (normal / congested) rather than one
+// mixed source — matches the legacy app's two markerClusterGroup
+// buckets (cluster-normal vs cluster-congested), so a cluster bubble's
+// color is always unambiguous instead of needing a mixed-state color.
+// maxClusterRadius:60 in the legacy Leaflet config maps directly to
+// MapLibre's clusterRadius.
 function addStatusLayer(map: maplibregl.Map, sourceId: string, rows: CurrentStatusRow[], onSiteClick?: (siteId: string) => void) {
-  const geojson = statusGeoJson(rows)
-  const existing = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined
+  const normalGeojson = statusGeoJson(rows.filter((r) => !r.congested))
+  const congestedGeojson = statusGeoJson(rows.filter((r) => r.congested))
+
+  const normalId = `${sourceId}-normal`
+  const congestedId = `${sourceId}-congested`
+
+  const existing = map.getSource(normalId) as maplibregl.GeoJSONSource | undefined
   if (existing) {
-    existing.setData(geojson)
+    existing.setData(normalGeojson)
+    ;(map.getSource(congestedId) as maplibregl.GeoJSONSource).setData(congestedGeojson)
     return
   }
-  map.addSource(sourceId, { type: 'geojson', data: geojson })
-  map.addLayer({
-    id: `${sourceId}-circle`,
-    type: 'circle',
-    source: sourceId,
-    paint: {
-      'circle-radius': 6,
-      'circle-color': ['case', ['get', 'congested'], '#dc2626', '#3b82f6'],
-      'circle-stroke-width': 2,
-      'circle-stroke-color': '#ffffff',
-    },
-  })
-  map.on('mouseenter', `${sourceId}-circle`, () => {
-    map.getCanvas().style.cursor = 'pointer'
-  })
-  map.on('mouseleave', `${sourceId}-circle`, () => {
-    map.getCanvas().style.cursor = ''
-  })
-  map.on('click', `${sourceId}-circle`, (e) => {
-    const f = e.features?.[0]
-    if (!f) return
-    const props = f.properties as { site_id: string }
-    const popup = new maplibregl.Popup().setLngLat(e.lngLat).setHTML(siteDetailHtml(props.site_id, null, true)).addTo(map)
-    api
-      .siteDetail(props.site_id)
-      .then((detail) => popup.setHTML(siteDetailHtml(props.site_id, detail, false)))
-      .catch(() => popup.setHTML(siteDetailHtml(props.site_id, null, false)))
-    onSiteClick?.(props.site_id)
-  })
+
+  const buildBucket = (id: string, data: GeoJSON.FeatureCollection, color: string) => {
+    map.addSource(id, { type: 'geojson', data, cluster: true, clusterMaxZoom: 14, clusterRadius: 60 })
+    map.addLayer({
+      id: `${id}-cluster-circle`,
+      type: 'circle',
+      source: id,
+      filter: ['has', 'point_count'],
+      paint: {
+        'circle-radius': ['step', ['get', 'point_count'], 16, 25, 20, 100, 26],
+        'circle-color': color,
+        'circle-opacity': 0.85,
+        'circle-stroke-width': 2,
+        'circle-stroke-color': '#ffffff',
+      },
+    })
+    map.addLayer({
+      id: `${id}-cluster-count`,
+      type: 'symbol',
+      source: id,
+      filter: ['has', 'point_count'],
+      layout: { 'text-field': '{point_count_abbreviated}', 'text-size': 12, 'text-font': ['Open Sans Bold'] },
+      paint: { 'text-color': '#ffffff' },
+    })
+    map.addLayer({
+      id: `${id}-point`,
+      type: 'circle',
+      source: id,
+      filter: ['!', ['has', 'point_count']],
+      paint: {
+        'circle-radius': 6,
+        'circle-color': color,
+        'circle-stroke-width': 2,
+        'circle-stroke-color': '#ffffff',
+      },
+    })
+
+    map.on('mouseenter', `${id}-cluster-circle`, () => (map.getCanvas().style.cursor = 'pointer'))
+    map.on('mouseleave', `${id}-cluster-circle`, () => (map.getCanvas().style.cursor = ''))
+    map.on('mouseenter', `${id}-point`, () => (map.getCanvas().style.cursor = 'pointer'))
+    map.on('mouseleave', `${id}-point`, () => (map.getCanvas().style.cursor = ''))
+
+    map.on('click', `${id}-cluster-circle`, (e) => {
+      const f = e.features?.[0]
+      if (!f) return
+      const clusterId = (f.properties as { cluster_id: number }).cluster_id
+      const source = map.getSource(id) as maplibregl.GeoJSONSource
+      source.getClusterExpansionZoom(clusterId).then((zoom) => {
+        map.easeTo({ center: (f.geometry as GeoJSON.Point).coordinates as [number, number], zoom })
+      })
+    })
+
+    map.on('click', `${id}-point`, (e) => {
+      const f = e.features?.[0]
+      if (!f) return
+      const props = f.properties as { site_id: string }
+      const popup = new maplibregl.Popup().setLngLat(e.lngLat).setHTML(siteDetailHtml(props.site_id, null, true)).addTo(map)
+      api
+        .siteDetail(props.site_id)
+        .then((detail) => popup.setHTML(siteDetailHtml(props.site_id, detail, false)))
+        .catch(() => popup.setHTML(siteDetailHtml(props.site_id, null, false)))
+      onSiteClick?.(props.site_id)
+    })
+  }
+
+  buildBucket(normalId, normalGeojson, '#3b82f6')
+  buildBucket(congestedId, congestedGeojson, '#dc2626')
 }
 
 function annotationToFeature(a: AnnotationOut): Feature {
@@ -323,6 +399,8 @@ export function MapPage() {
   const [forecastStats, setForecastStats] = useState<MapStats | null>(null)
   const [tool, setTool] = useState<DrawTool>('none')
   const [drawMenuOpen, setDrawMenuOpen] = useState(false)
+  const [measureActive, setMeasureActive] = useState(false)
+  const [measurePoints, setMeasurePoints] = useState<[number, number][]>([])
   const [draftPoints, setDraftPoints] = useState<[number, number][]>([])
   const [status, setStatus] = useState<string | null>(null)
 
@@ -482,6 +560,79 @@ export function MapPage() {
       map.off('click', handleClick)
     }
   }, [tool])
+
+  // Measurement tool: independent of the draw tool, doesn't create
+  // annotations — just accumulates clicked points to report distance
+  // and bearing between them.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !measureActive) return
+    function handleClick(e: maplibregl.MapMouseEvent) {
+      setMeasurePoints((prev) => [...prev, [e.lngLat.lng, e.lngLat.lat]])
+    }
+    map.on('click', handleClick)
+    return () => {
+      map.off('click', handleClick)
+    }
+  }, [measureActive])
+
+  // Render the measurement line + per-segment distance/bearing labels
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    const sourceId = 'measure-line'
+    const pointSourceId = 'measure-points'
+    const labelSourceId = 'measure-labels'
+
+    const lineData: FeatureCollection = {
+      type: 'FeatureCollection',
+      features: measurePoints.length >= 2 ? [{ type: 'Feature', geometry: { type: 'LineString', coordinates: measurePoints }, properties: {} }] : [],
+    }
+    const pointData: FeatureCollection = {
+      type: 'FeatureCollection',
+      features: measurePoints.map((p) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: p }, properties: {} })),
+    }
+    const labelData: FeatureCollection = {
+      type: 'FeatureCollection',
+      features: measurePoints.slice(1).map((p, i) => {
+        const prev = measurePoints[i]
+        const mid: [number, number] = [(prev[0] + p[0]) / 2, (prev[1] + p[1]) / 2]
+        const dist = haversineDistanceMeters(prev, p)
+        const bearing = bearingDegrees(prev, p)
+        return { type: 'Feature', geometry: { type: 'Point', coordinates: mid }, properties: { label: `${fmtDistance(dist)} · ${bearing.toFixed(0)}°` } }
+      }),
+    }
+
+    const apply = () => {
+      const existingLine = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined
+      if (existingLine) {
+        existingLine.setData(lineData)
+        ;(map.getSource(pointSourceId) as maplibregl.GeoJSONSource).setData(pointData)
+        ;(map.getSource(labelSourceId) as maplibregl.GeoJSONSource).setData(labelData)
+        return
+      }
+      if (!map.isStyleLoaded()) return
+      map.addSource(sourceId, { type: 'geojson', data: lineData })
+      map.addLayer({ id: `${sourceId}-line`, type: 'line', source: sourceId, paint: { 'line-color': '#22d3ee', 'line-width': 2, 'line-dasharray': [2, 1] } })
+      map.addSource(pointSourceId, { type: 'geojson', data: pointData })
+      map.addLayer({
+        id: `${pointSourceId}-circle`,
+        type: 'circle',
+        source: pointSourceId,
+        paint: { 'circle-radius': 5, 'circle-color': '#22d3ee', 'circle-stroke-width': 2, 'circle-stroke-color': '#ffffff' },
+      })
+      map.addSource(labelSourceId, { type: 'geojson', data: labelData })
+      map.addLayer({
+        id: `${labelSourceId}-symbol`,
+        type: 'symbol',
+        source: labelSourceId,
+        layout: { 'text-field': ['get', 'label'], 'text-size': 11, 'text-offset': [0, -1] },
+        paint: { 'text-color': '#22d3ee', 'text-halo-color': '#0b1220', 'text-halo-width': 1.5 },
+      })
+    }
+    if (map.isStyleLoaded()) apply()
+    else map.once('load', apply)
+  }, [measurePoints])
 
   // Render the in-progress sketch for line/polygon tools
   useEffect(() => {
@@ -662,6 +813,8 @@ export function MapPage() {
                         setDraftPoints([])
                         setTool(t)
                         setDrawMenuOpen(false)
+                        setMeasureActive(false)
+                        setMeasurePoints([])
                       }}
                       className={`flex h-9 w-9 items-center justify-center rounded-xl ${
                         tool === t ? 'bg-sky-400 text-ink-900' : 'text-white/80 hover:bg-white/10'
@@ -683,6 +836,45 @@ export function MapPage() {
               >
                 Cancel draw
               </button>
+            )}
+
+            <div>
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">Measure</p>
+              <button
+                onClick={() => {
+                  if (!measureActive) {
+                    setTool('none')
+                    setDraftPoints([])
+                  }
+                  setMeasureActive((v) => !v)
+                  setMeasurePoints([])
+                }}
+                title="Measure distance and bearing"
+                className={`flex h-9 w-9 items-center justify-center rounded-xl ${
+                  measureActive ? 'bg-sky-400 text-ink-900' : 'border border-white/20 text-white/80'
+                }`}
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M3 17 17 3M5 19l2-2M9 15l2-2M13 11l2-2" />
+                  <path d="M17 3l4 4-14 14-4-4z" />
+                </svg>
+              </button>
+            </div>
+            {measureActive && (
+              <button
+                onClick={() => setMeasurePoints([])}
+                className="rounded-xl border border-white/20 px-3 py-2 text-xs font-semibold text-white/70"
+              >
+                Clear points
+              </button>
+            )}
+            {measurePoints.length >= 2 && (
+              <div className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs">
+                <span className="text-white/55">Total distance </span>
+                <span className="font-semibold text-sky-300">
+                  {fmtDistance(measurePoints.slice(1).reduce((sum, p, i) => sum + haversineDistanceMeters(measurePoints[i], p), 0))}
+                </span>
+              </div>
             )}
             {(tool === 'line' || tool === 'polygon') && (
               <button
@@ -736,6 +928,14 @@ export function MapPage() {
               <p className="font-semibold">{fmtCurrency(overview?.total_capex)}</p>
             </div>
             <div className="border-t border-white/10 pt-2.5">
+              <p className="text-white/55">Worst congested sector</p>
+              <p className="font-semibold">
+                {overview?.worst_congested_sector
+                  ? `${overview.worst_congested_sector.zoom_sector_id} (${overview.worst_congested_sector.region}) · ${overview.worst_congested_sector.congested_weeks} wks`
+                  : '—'}
+              </p>
+            </div>
+            <div>
               <p className="text-white/55">Worst Ookla cluster</p>
               <p className="font-semibold">
                 {overview?.worst_ookla_cluster

@@ -82,7 +82,7 @@ def test_overview_stats_endpoint_with_no_data(client) -> None:
     assert resp.status_code == 200
     assert resp.json() == {
         "total_sites": 0, "total_congested_sites": 0, "total_capex": 0.0,
-        "worst_ookla_cluster": None, "worst_mr_cluster": None,
+        "worst_congested_sector": None, "worst_ookla_cluster": None, "worst_mr_cluster": None,
     }
 
 
