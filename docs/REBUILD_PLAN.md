@@ -37,18 +37,21 @@ Module-by-module phased rebuild of 3W. Each phase should be reviewed before movi
   - [x] Migration `0005`: pgvector extension + `knowledge_chunks` table, verified by generating real DDL in offline mode
   - [x] 15 new tests, 121/121 total passing, ruff clean
 - [ ] **Phase 5 — Frontend rebuild:** React + Vite + Tailwind v4 + MapLibre GL, Metabase embedding
-  - [x] Design system locked in: glassmorphic panels on a deep indigo-blue background, live canvas particle stream (blue/yellow, ~2200 particles, glow), Space Grotesk + Plus Jakarta Sans (deliberately not the default Inter/Roboto look)
-  - [x] Foundation: Vite scaffold, Tailwind v4 theme tokens, `ParticleBackground`, `GlassPanel`, `AppShell` (nav), API client + auth context wired to the real backend
+  - [x] Design system locked in: glassmorphic panels (shadow depth + inset highlight + top shine line) on an
+    animated CSS/SVG gradient background (blue/yellow drifting blobs + grain texture — replaced an earlier
+    canvas particle-stream prototype that wasn't reliably rendering), Space Grotesk + Plus Jakarta Sans
+  - [x] Foundation: Vite scaffold, Tailwind v4 theme tokens, `AnimatedBackground`, `GlassPanel`, `AppShell` (nav), API client + auth context wired to the real backend
   - [x] Login page — wired to `POST /auth/login`
-  - [x] Dashboard page — wired to `GET /analytics/current-status` + `GET /annotations/gantt/rows` (real data, not mock), full legacy "RAN Forecast" tab ported (filter bar, stat tiles, sector metrics/congested/forecast tables)
+  - [x] Dashboard page — wired to `GET /analytics/current-status` + `GET /annotations/gantt/rows` (real data, not mock); full legacy "RAN Forecast" tab ported as three sub-tabs (sector metrics/forecasts/congested), each with real server-side pagination (`{rows, total}`) instead of a silently-truncated first page; live per-site forecast graph (`ForecastChart`, plain SVG — actual line + dashed projection + 95% confidence band) wired to `GET /analytics/site-forecast/{site_id}`, the same live-linear-regression method as the legacy `/plot` route
   - [x] Map page — MapLibre GL, split-screen current-vs-forecast (synced panes), icon-based draw tool (point/line/polygon/buffer) creating a brand-new note or project per shape, rich site-detail popup (KPIs + forecast + CAPEX upgrade), viewport-scoped + network-wide stats panels (`GET /analytics/map-stats`, `GET /analytics/overview-stats`)
   - [x] Notes page — list + description + map centered on the note's annotation
   - [x] Projects page — list + kanban (todo/in progress/pending review/done) + auto-generated Gantt strip + discussion thread; tasks support multiple assignees
   - [x] Chat page — conversation list (`GET /chat/conversations`, new) + thread view + new-DM composer
   - [x] CAPEX pricing admin page — two-tier (admin sees/edits exact price, staff sees range only)
   - [x] Agent page — chat UI against the stateless `POST /agent/chat` (LLM provider reachability is an environment concern, not a page bug)
+  - [x] Data management page (admin-only) — upload raw source files by category (site/cell exports, cell reference, weekly Network Data), spreadsheet-style preview, trigger the ETL pipeline from the UI; ETL run for real against `dataset_example/` for the first time in this environment (30,750 sites, 947 congested sectors across 3 of 4 weeks, RM 415M in CAPEX recommendations — week 48 still fails on an unresolved real data issue)
   - [ ] Reviews page, RAG search UI, Metabase embedding
-  - [x] Frontend typecheck/lint clean throughout, vitest clean, 170/170 backend tests passing
+  - [x] Frontend typecheck/lint clean throughout, vitest clean, 198/198 backend tests passing (1 known pre-existing flaky timestamp-ordering test, passes in isolation)
 - [ ] **Phase 6 — AWS readiness:** Terraform (S3, RDS, ECS/Fargate or App Runner), secrets migration, CI/CD deploy pipeline
 
 See [docs/adr/0001-architecture.md](adr/0001-architecture.md) for the architecture rationale behind these choices.

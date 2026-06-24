@@ -7,7 +7,7 @@ import os
 os.environ.setdefault("POSTGRES_DSN", "postgresql+psycopg://test:test@localhost/test")
 os.environ.setdefault("MINIO_ACCESS_KEY", "test")
 os.environ.setdefault("MINIO_SECRET_KEY", "test")
-os.environ.setdefault("JWT_SECRET", "test-secret")
+os.environ.setdefault("JWT_SECRET", "test-secret-thats-long-enough-for-hs256-32-bytes")
 
 import pytest  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402

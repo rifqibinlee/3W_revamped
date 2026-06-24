@@ -1,4 +1,4 @@
-from collections.abc import Iterable
+from collections.abc import Callable
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -25,7 +25,7 @@ def get_current_user(token: str | None = Depends(oauth2_scheme), db: Session = D
     return user
 
 
-def require_roles(*allowed: Role) -> Iterable:
+def require_roles(*allowed: Role) -> Callable[..., User]:
     def _check(user: User = Depends(get_current_user)) -> User:
         if user.role not in allowed:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permissions")

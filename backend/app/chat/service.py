@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -35,7 +37,9 @@ def get_or_create_direct_conversation(db: Session, user_a_id: str, user_b_id: st
     )
     for conversation_id in candidate_ids:
         if _participant_ids(db, conversation_id) == {user_a_id, user_b_id}:
-            return db.get(Conversation, conversation_id)
+            conversation = db.get(Conversation, conversation_id)
+            assert conversation is not None, f"conversation {conversation_id} vanished between query and get"
+            return conversation
 
     conversation = Conversation(is_group=False)
     db.add(conversation)
@@ -71,7 +75,7 @@ def list_my_conversations(db: Session, user_id: str) -> list[Conversation]:
         return []
     conversations = list(db.scalars(select(Conversation).where(Conversation.id.in_(conversation_ids))))
 
-    last_message_at: dict[str, object] = {}
+    last_message_at: dict[str, datetime | None] = {}
     for conversation_id in conversation_ids:
         last = db.scalar(
             select(Message.created_at)

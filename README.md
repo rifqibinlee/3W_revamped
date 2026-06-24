@@ -6,23 +6,45 @@ This is a from-scratch rewrite of the original 3W app. See [docs/adr/0001-archit
 
 ## Stack
 
-- **Backend:** FastAPI (Python), modular routers per domain
+- **Backend:** FastAPI (Python 3.10+), modular routers per domain
 - **Analytics:** DuckDB over local Parquet files (replaces AWS Athena-on-CSV)
 - **Transactional/RAG data:** PostgreSQL 16 + pgvector
 - **Object storage (local):** MinIO (S3-compatible), swapped for real S3 in the AWS phase
-- **Frontend:** React + Vite + MapLibre GL
-- **BI:** Metabase (kept from the original stack)
-- **AI agent:** LangGraph + LiteLLM (Claude) + Ollama (local models)
+- **Frontend:** React 19 + Vite + Tailwind v4 + MapLibre GL
+- **BI:** Metabase (kept from the original stack; not yet wired up)
+- **AI agent:** LangGraph + LangChain, Claude primary / Ollama automatic local-dev fallback
 - **Spatial:** GeoServer (WMS/WFS), Shapely, OSMnx
 
 ## Status
 
-Phase 0 — foundations. See [docs/REBUILD_PLAN.md](docs/REBUILD_PLAN.md) for current phase and what's next.
+Phase 5 (frontend) is mostly complete — see [docs/REBUILD_PLAN.md](docs/REBUILD_PLAN.md) for the
+detailed phase-by-phase checklist and what's left (Reviews page, RAG search UI, Metabase embedding,
+then Phase 6 AWS readiness).
 
 ## Local development
 
-```bash
-docker compose -f infra/docker-compose.yml up -d
-```
+1. Start infra (Postgres, MinIO):
 
-See [backend/README.md](backend/README.md) and [frontend/README.md](frontend/README.md) once scaffolded.
+   ```bash
+   docker compose -f infra/docker-compose.yml up -d postgres minio
+   ```
+
+2. Backend — copy `backend/.env.example` to `backend/.env` and fill in real values, then:
+
+   ```bash
+   cd backend
+   pip install -e ".[dev]"          # or: pip install -e . -r requirements-lock.txt
+   alembic upgrade head
+   uvicorn app.main:app --reload    # http://localhost:8000, docs at /docs
+   ```
+
+3. Frontend:
+
+   ```bash
+   cd frontend
+   npm install
+   npm run dev                      # http://localhost:5173 (or next free port)
+   ```
+
+Run tests with `pytest -q` (backend) and `npx vitest run` (frontend) — both also run in CI on every
+push/PR that touches their respective directory (`.github/workflows/`).

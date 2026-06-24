@@ -9,6 +9,7 @@ from app.auth.dependencies import get_current_user
 from app.auth.models import User
 from app.core.db import SessionLocal, get_db
 from app.rag import service
+from app.rag.models import KnowledgeChunk
 from app.rag.schemas import SearchRequest, SearchResult
 
 logger = logging.getLogger(__name__)
@@ -47,5 +48,5 @@ async def ingest(
 
 
 @router.post("/search", response_model=list[SearchResult])
-def search(payload: SearchRequest, db: Session = Depends(get_db)) -> list[SearchResult]:
+def search(payload: SearchRequest, db: Session = Depends(get_db)) -> list[KnowledgeChunk]:
     return service.search(db, payload.query, payload.top_k)
