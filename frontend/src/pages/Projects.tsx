@@ -3,9 +3,10 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { GlassPanel } from '../components/GlassPanel'
 import { api, ApiError, type AnnotationOut, type CommentOut, type ProjectOut, type TaskOut, type UserOut } from '../lib/api'
+import { addStatusLayer, BASE_STYLE } from '../lib/mapLayers'
 import { useAuth } from '../lib/useAuth'
 
-const STYLE_URL = 'https://demotiles.maplibre.org/style.json'
+const STYLE_URL = BASE_STYLE
 const DEFAULT_CENTER: [number, number] = [101.5, 3.1]
 
 const COLUMNS: { status: string; label: string }[] = [
@@ -79,6 +80,9 @@ export function Projects() {
     const map = new maplibregl.Map({ container: mapContainerRef.current, style: STYLE_URL, center: DEFAULT_CENTER, zoom: 11 })
     mapRef.current = map
     map.addControl(new maplibregl.NavigationControl(), 'top-right')
+    map.on('load', () => {
+      api.currentStatus().then((rows) => addStatusLayer(map, 'project-sites', rows)).catch(() => undefined)
+    })
     return () => {
       map.remove()
       mapRef.current = null

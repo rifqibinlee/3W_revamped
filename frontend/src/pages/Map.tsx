@@ -16,29 +16,11 @@ import {
   type MapStats,
   type OverviewStats,
   type SiteCoverageRow,
-  type SiteDetail,
   type UserOut,
 } from '../lib/api'
+import { addStatusLayer, BASE_STYLE, fmt, statusGeoJson } from '../lib/mapLayers'
 
-// The demotiles vector style this used to point at has no roads, rivers,
-// or place labels at all (it's a bare country-outline demo style) — not
-// usable as a real "normal" basemap. CartoDB Voyager is a free,
-// no-API-key raster basemap with roads/water/labels, similar detail
-// level to the legacy app's normal map (which it never actually had —
-// legacy always showed Esri satellite + CartoDB label-only overlay, see
-// the 'satellite-base' source below for that exact stack).
-const STYLE_URL: maplibregl.StyleSpecification = {
-  version: 8,
-  sources: {
-    'carto-voyager': {
-      type: 'raster',
-      tiles: ['https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png'],
-      tileSize: 256,
-      attribution: '© OpenStreetMap contributors © CARTO',
-    },
-  },
-  layers: [{ id: 'carto-voyager-layer', type: 'raster', source: 'carto-voyager' }],
-}
+const STYLE_URL = BASE_STYLE
 // Centered on the real site distribution across Peninsular Malaysia
 // (lat 1.3-6.2, lng 101.6-104.3), not just the Klang Valley — zoom 7
 // keeps the whole network visible by default instead of an empty patch.
@@ -91,19 +73,6 @@ const DRAW_TOOLS: { tool: DrawTool; label: string; icon: ReactElement }[] = [
     ),
   },
 ]
-
-function statusGeoJson(rows: CurrentStatusRow[]): FeatureCollection {
-  return {
-    type: 'FeatureCollection',
-    features: rows
-      .filter((r) => r.latitude != null && r.longitude != null)
-      .map((r) => ({
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: [r.longitude as number, r.latitude as number] },
-        properties: { site_id: r.site_id, region: r.region, congested: r.congested, congestedFlag: r.congested ? 1 : 0 },
-      })),
-  }
-}
 
 function circlePolygon(center: [number, number], radiusMeters: number): Polygon {
   const points = 48
@@ -172,10 +141,6 @@ function sectorWedgePolygon(center: [number, number], radiusMeters: number, azim
   return { type: 'Polygon', coordinates: [coords] }
 }
 
-function fmt(n: number | null | undefined, digits = 1): string {
-  return n == null || Number.isNaN(n) ? '—' : n.toFixed(digits)
-}
-
 function fmtCurrency(n: number | null | undefined): string {
   return n == null ? '—' : `RM ${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
 }
@@ -183,156 +148,6 @@ function fmtCurrency(n: number | null | undefined): string {
 function readBounds(map: maplibregl.Map): MapBounds {
   const b = map.getBounds()
   return { south: b.getSouth(), west: b.getWest(), north: b.getNorth(), east: b.getEast() }
-}
-
-function siteDetailHtml(siteId: string, detail: SiteDetail | null, loading: boolean): string {
-  if (loading) {
-    return `<div style="font-family:inherit;min-width:220px;padding:4px;"><strong>${siteId}</strong><br/><span style="opacity:.7">Loading…</span></div>`
-  }
-  if (!detail) {
-    return `<div style="font-family:inherit;min-width:220px;padding:4px;"><strong>${siteId}</strong><br/><span style="opacity:.7">No data</span></div>`
-  }
-
-  const latest = detail.sectors[0]
-  const statusLine = detail.congested
-    ? '<span style="color:#f87171;font-weight:700;">⚠ Congested</span>'
-    : '<span style="color:#4ade80;font-weight:700;">✓ Healthy</span>'
-
-  const paramsHtml = latest
-    ? `
-      <table style="width:100%;font-size:11px;margin-top:6px;border-collapse:collapse;">
-        <tr><td style="opacity:.6;padding:1px 0;">Data volume (GB)</td><td style="text-align:right;">${fmt(latest.eric_data_volume_ul_dl)}</td></tr>
-        <tr><td style="opacity:.6;padding:1px 0;">PRB utilization</td><td style="text-align:right;">${fmt(latest.eric_prb_util_rate)}%</td></tr>
-        <tr><td style="opacity:.6;padding:1px 0;">DL throughput</td><td style="text-align:right;">${fmt(latest.eric_dl_user_ip_thpt)}</td></tr>
-        <tr><td style="opacity:.6;padding:1px 0;">Max RRC users</td><td style="text-align:right;">${fmt(latest.eric_max_rrc_user, 0)}</td></tr>
-      </table>`
-    : '<p style="font-size:11px;opacity:.6;margin-top:4px;">No sector KPIs available</p>'
-
-  const nextForecast = detail.forecast[0]
-  const forecastHtml = nextForecast
-    ? `<p style="font-size:11px;margin-top:6px;"><strong>Forecast</strong> (Wk ${nextForecast.week}/${nextForecast.year}): ${nextForecast.congested ? '⚠ Congested' : '✓ Normal'} · ${fmt(nextForecast.predicted_eric_prb_util_rate)}% PRB</p>`
-    : '<p style="font-size:11px;opacity:.6;margin-top:6px;">No forecast available</p>'
-
-  const upgrade = detail.capex_upgrades[0] as Record<string, unknown> | undefined
-  const capexHtml = upgrade
-    ? `<p style="font-size:11px;margin-top:6px;"><strong>Upgrade:</strong> ${upgrade.suggested_upgrade_case ?? '—'}<br/>Est. CAPEX: RM ${fmt(upgrade.estimated_total_capex_rm as number, 0)}</p>`
-    : '<p style="font-size:11px;opacity:.6;margin-top:6px;">No upgrade recommended</p>'
-
-  return `
-    <div style="font-family:inherit;min-width:220px;padding:4px;">
-      <strong>${siteId}</strong> ${detail.site ? `· ${detail.site.region}` : ''}<br/>
-      ${statusLine}
-      ${paramsHtml}
-      ${forecastHtml}
-      ${capexHtml}
-    </div>`
-}
-
-// Two separate clustered sources (normal / congested) rather than one
-// mixed source — matches the legacy app's two markerClusterGroup
-// buckets (cluster-normal vs cluster-congested), so a cluster bubble's
-// color is always unambiguous instead of needing a mixed-state color.
-// maxClusterRadius:60 in the legacy Leaflet config maps directly to
-// MapLibre's clusterRadius.
-// Healthy and congested sites cluster together in one group (separate
-// groups used to overlap and visually compete at the same spot) — the
-// cluster bubble's color is a blue→red gradient driven by what
-// fraction of the cluster is congested, via clusterProperties summing
-// a 0/1 "congested" flag during clustering. The "glassy" look is two
-// circle layers: a soft blurred halo underneath, a crisper translucent
-// disc with a white rim on top.
-const CONGESTED_RATIO_COLOR: maplibregl.ExpressionSpecification = [
-  'interpolate', ['linear'], ['/', ['get', 'congestedSum'], ['get', 'point_count']],
-  0, '#3b82f6', 0.5, '#a855f7', 1, '#dc2626',
-]
-
-function addStatusLayer(map: maplibregl.Map, sourceId: string, rows: CurrentStatusRow[], onSiteClick?: (siteId: string) => void) {
-  const data = statusGeoJson(rows)
-
-  const existing = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined
-  if (existing) {
-    existing.setData(data)
-    return
-  }
-
-  map.addSource(sourceId, {
-    type: 'geojson', data, cluster: true, clusterMaxZoom: 14, clusterRadius: 60,
-    clusterProperties: { congestedSum: ['+', ['get', 'congestedFlag']] },
-  })
-
-  map.addLayer({
-    id: `${sourceId}-cluster-glow`,
-    type: 'circle',
-    source: sourceId,
-    filter: ['has', 'point_count'],
-    paint: {
-      'circle-radius': ['step', ['get', 'point_count'], 24, 25, 30, 100, 38],
-      'circle-color': CONGESTED_RATIO_COLOR,
-      'circle-opacity': 0.35,
-      'circle-blur': 1,
-    },
-  })
-  map.addLayer({
-    id: `${sourceId}-cluster-circle`,
-    type: 'circle',
-    source: sourceId,
-    filter: ['has', 'point_count'],
-    paint: {
-      'circle-radius': ['step', ['get', 'point_count'], 16, 25, 20, 100, 26],
-      'circle-color': CONGESTED_RATIO_COLOR,
-      'circle-opacity': 0.55,
-      'circle-stroke-width': 1.5,
-      'circle-stroke-color': 'rgba(255,255,255,0.75)',
-    },
-  })
-  map.addLayer({
-    id: `${sourceId}-cluster-count`,
-    type: 'symbol',
-    source: sourceId,
-    filter: ['has', 'point_count'],
-    layout: { 'text-field': '{point_count_abbreviated}', 'text-size': 12, 'text-font': ['Open Sans Bold'] },
-    paint: { 'text-color': '#ffffff' },
-  })
-  map.addLayer({
-    id: `${sourceId}-point`,
-    type: 'circle',
-    source: sourceId,
-    filter: ['!', ['has', 'point_count']],
-    paint: {
-      'circle-radius': 6,
-      'circle-color': ['case', ['get', 'congested'], '#dc2626', '#3b82f6'],
-      'circle-opacity': 0.7,
-      'circle-stroke-width': 1.5,
-      'circle-stroke-color': 'rgba(255,255,255,0.75)',
-    },
-  })
-
-  map.on('mouseenter', `${sourceId}-cluster-circle`, () => (map.getCanvas().style.cursor = 'pointer'))
-  map.on('mouseleave', `${sourceId}-cluster-circle`, () => (map.getCanvas().style.cursor = ''))
-  map.on('mouseenter', `${sourceId}-point`, () => (map.getCanvas().style.cursor = 'pointer'))
-  map.on('mouseleave', `${sourceId}-point`, () => (map.getCanvas().style.cursor = ''))
-
-  map.on('click', `${sourceId}-cluster-circle`, (e) => {
-    const f = e.features?.[0]
-    if (!f) return
-    const clusterId = (f.properties as { cluster_id: number }).cluster_id
-    const source = map.getSource(sourceId) as maplibregl.GeoJSONSource
-    source.getClusterExpansionZoom(clusterId).then((zoom) => {
-      map.easeTo({ center: (f.geometry as GeoJSON.Point).coordinates as [number, number], zoom })
-    })
-  })
-
-  map.on('click', `${sourceId}-point`, (e) => {
-    const f = e.features?.[0]
-    if (!f) return
-    const props = f.properties as { site_id: string }
-    const popup = new maplibregl.Popup().setLngLat(e.lngLat).setHTML(siteDetailHtml(props.site_id, null, true)).addTo(map)
-    api
-      .siteDetail(props.site_id)
-      .then((detail) => popup.setHTML(siteDetailHtml(props.site_id, detail, false)))
-      .catch(() => popup.setHTML(siteDetailHtml(props.site_id, null, false)))
-    onSiteClick?.(props.site_id)
-  })
 }
 
 function annotationToFeature(a: AnnotationOut): Feature {
@@ -473,7 +288,7 @@ export function MapPage() {
   const [measurePoints, setMeasurePoints] = useState<[number, number][]>([])
   const baseLayerIdsRef = useRef<string[]>([])
 
-  const [layersOpen, setLayersOpen] = useState(false)
+  const [layersOpen, setLayersOpen] = useState(true)
   const [baseMap, setBaseMap] = useState<'normal' | 'satellite'>('normal')
   const [layerToggles, setLayerToggles] = useState({
     healthySites: true, congestedSites: true, heatmap: false,
@@ -488,10 +303,15 @@ export function MapPage() {
   // / geoserver_buildings_layer).
   const [fixedLayers, setFixedLayers] = useState<{ substations_layer: string; buildings_layer: string } | null>(null)
 
-  const [activeToolPanel, setActiveToolPanel] = useState<'none' | 'genset' | 'cctv' | 'bitcoin'>('none')
+  // Genset-single and the power-draw check are inline panels anchored to
+  // the far right of the toolbar (so the map stays visible to click a
+  // site while the panel is open) rather than a centered modal —
+  // genset-bulk and CCTV stay modals since they're file-upload forms
+  // that don't need the map visible while filling them in.
+  const [activeToolPanel, setActiveToolPanel] = useState<'none' | 'genset-bulk' | 'cctv'>('none')
+  const [rightPanel, setRightPanel] = useState<'none' | 'genset-single' | 'bitcoin'>('none')
 
   const [gensetMenuOpen, setGensetMenuOpen] = useState(false)
-  const [gensetMode, setGensetMode] = useState<'single' | 'bulk'>('single')
   const [gensetSiteId, setGensetSiteId] = useState('')
   const [gensetPickMode, setGensetPickMode] = useState(false)
   const [gensetPickedLatLng, setGensetPickedLatLng] = useState<[number, number] | null>(null)
@@ -1487,17 +1307,22 @@ export function MapPage() {
                 </div>
               )}
             </div>
-            {tool !== 'none' && (
-              <button
-                onClick={() => {
-                  setTool('none')
-                  setDraftPoints([])
-                }}
-                className="rounded-xl border border-white/20 px-3 py-2 text-xs font-semibold text-white/70"
-              >
-                Cancel draw
-              </button>
-            )}
+            <div>
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">&nbsp;</p>
+              {tool !== 'none' ? (
+                <button
+                  onClick={() => {
+                    setTool('none')
+                    setDraftPoints([])
+                  }}
+                  className="h-9 rounded-xl border border-white/20 px-3 text-xs font-semibold text-white/70"
+                >
+                  Cancel draw
+                </button>
+              ) : (
+                <div className="h-9" />
+              )}
+            </div>
 
             <div>
               <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">Measure</p>
@@ -1521,22 +1346,6 @@ export function MapPage() {
                 </svg>
               </button>
             </div>
-            {measureActive && (
-              <button
-                onClick={() => setMeasurePoints([])}
-                className="rounded-xl border border-white/20 px-3 py-2 text-xs font-semibold text-white/70"
-              >
-                Clear points
-              </button>
-            )}
-            {measurePoints.length >= 2 && (
-              <div className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs">
-                <span className="text-white/55">Total distance </span>
-                <span className="font-semibold text-sky-300">
-                  {fmtDistance(measurePoints.slice(1).reduce((sum, p, i) => sum + haversineDistanceMeters(measurePoints[i], p), 0))}
-                </span>
-              </div>
-            )}
 
             <div className="relative z-30">
               <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">Genset</p>
@@ -1556,8 +1365,7 @@ export function MapPage() {
                 <div className="absolute left-0 top-full z-30 mt-2 w-36 rounded-2xl border border-white/15 bg-ink-900/95 p-2 text-xs backdrop-blur-xl">
                   <button
                     onClick={() => {
-                      setGensetMode('single')
-                      setActiveToolPanel('genset')
+                      setRightPanel('genset-single')
                       setGensetMenuOpen(false)
                     }}
                     className="block w-full rounded-lg px-2.5 py-1.5 text-left text-white/80 hover:bg-white/10"
@@ -1566,8 +1374,7 @@ export function MapPage() {
                   </button>
                   <button
                     onClick={() => {
-                      setGensetMode('bulk')
-                      setActiveToolPanel('genset')
+                      setActiveToolPanel('genset-bulk')
                       setGensetMenuOpen(false)
                     }}
                     className="block w-full rounded-lg px-2.5 py-1.5 text-left text-white/80 hover:bg-white/10"
@@ -1595,7 +1402,7 @@ export function MapPage() {
             <div>
               <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">Power check</p>
               <button
-                onClick={() => setActiveToolPanel('bitcoin')}
+                onClick={() => setRightPanel((v) => (v === 'bitcoin' ? 'none' : 'bitcoin'))}
                 title="Unauthorized power-draw check"
                 className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 text-white/80"
               >
@@ -1613,6 +1420,151 @@ export function MapPage() {
                 Finish ({draftPoints.length} pts)
               </button>
             )}
+
+            {/* Far-right zone: measure results, and the Genset single-site
+                /power-draw-check inline panels — inline rather than a
+                centered modal so the map stays visible to click a site. */}
+            <div className="ml-auto flex items-end gap-3">
+              {measureActive && (
+                <div>
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">&nbsp;</p>
+                  <button
+                    onClick={() => setMeasurePoints([])}
+                    className="h-9 rounded-xl border border-white/20 px-3 text-xs font-semibold text-white/70"
+                  >
+                    Clear points
+                  </button>
+                </div>
+              )}
+              {measurePoints.length >= 2 && (
+                <div>
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">&nbsp;</p>
+                  <div className="flex h-9 items-center rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 text-xs">
+                    <span className="text-white/55">Total distance </span>
+                    <span className="ml-1 font-semibold text-sky-300">
+                      {fmtDistance(measurePoints.slice(1).reduce((sum, p, i) => sum + haversineDistanceMeters(measurePoints[i], p), 0))}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {rightPanel === 'genset-single' && (
+                <div className="w-72">
+                  <div className="mb-1 flex items-center justify-between">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-white/45">Genset — single site</p>
+                    <button
+                      onClick={() => {
+                        setRightPanel('none')
+                        setGensetResult(null)
+                        setGensetStatus(null)
+                        setGensetPickMode(false)
+                        setGensetPickedLatLng(null)
+                      }}
+                      className="text-white/40 hover:text-white"
+                    >
+                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M6 6l12 12M18 6 6 18" />
+                      </svg>
+                    </button>
+                  </div>
+                  <div className="rounded-xl border border-white/15 bg-white/5 p-3">
+                    <div className="mb-2 flex gap-1.5">
+                      <button
+                        onClick={() => {
+                          setGensetPickMode((v) => !v)
+                          setGensetPickedLatLng(null)
+                        }}
+                        className={`flex-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold ${
+                          gensetPickMode ? 'bg-sky-400 text-ink-900' : 'border border-white/20 text-white/70'
+                        }`}
+                      >
+                        {gensetPickMode ? 'Click a point…' : 'Click site on map'}
+                      </button>
+                      {gensetPickedLatLng && (
+                        <button onClick={() => setGensetPickedLatLng(null)} className="rounded-lg border border-white/20 px-2.5 py-1.5 text-xs font-semibold text-white/70">
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                    {gensetPickedLatLng ? (
+                      <p className="mb-2 rounded-lg bg-white/5 px-2.5 py-1.5 text-xs text-white/70">
+                        Pinned: {gensetPickedLatLng[0].toFixed(5)}, {gensetPickedLatLng[1].toFixed(5)}
+                      </p>
+                    ) : (
+                      <input
+                        value={gensetSiteId}
+                        onChange={(e) => setGensetSiteId(e.target.value)}
+                        placeholder="Or search by site ID — e.g. N00377"
+                        className="mb-2 w-full rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs focus:border-sky-400/60 focus:outline-none"
+                      />
+                    )}
+                    <button
+                      onClick={runGenset}
+                      className="mb-2 w-full rounded-lg bg-gradient-to-r from-accent-400 to-accent-500 px-3 py-1.5 text-xs font-semibold text-ink-900"
+                    >
+                      Find route
+                    </button>
+                    {gensetStatus && <p className="mb-1.5 text-[11px] text-white/60">{gensetStatus}</p>}
+                    {gensetResult && gensetResult.results.length > 0 && (
+                      <ul className="max-h-32 space-y-1 overflow-y-auto text-[11px]">
+                        {gensetResult.results.map((r) => (
+                          <li key={r.osm_id} className="rounded-lg bg-white/5 px-2 py-1">
+                            <span className="font-semibold">{r.name}</span>
+                            <span className="text-white/55"> — {r.road_dist_km} km</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {rightPanel === 'bitcoin' && (
+                <div className="w-72">
+                  <div className="mb-1 flex items-center justify-between">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-white/45">Power-draw check</p>
+                    <button
+                      onClick={() => {
+                        setRightPanel('none')
+                        setBitcoinResult(null)
+                        setBitcoinStatus(null)
+                      }}
+                      className="text-white/40 hover:text-white"
+                    >
+                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M6 6l12 12M18 6 6 18" />
+                      </svg>
+                    </button>
+                  </div>
+                  <div className="rounded-xl border border-white/15 bg-white/5 p-3">
+                    <input
+                      value={bitcoinSiteIds}
+                      onChange={(e) => setBitcoinSiteIds(e.target.value)}
+                      placeholder="2-3 site IDs, comma-separated"
+                      className="mb-2 w-full rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs focus:border-sky-400/60 focus:outline-none"
+                    />
+                    <button
+                      onClick={runBitcoinMining}
+                      className="mb-2 w-full rounded-lg bg-gradient-to-r from-accent-400 to-accent-500 px-3 py-1.5 text-xs font-semibold text-ink-900"
+                    >
+                      Check
+                    </button>
+                    {bitcoinStatus && <p className="mb-1.5 text-[11px] text-white/60">{bitcoinStatus}</p>}
+                    {bitcoinResult && (
+                      <div className="rounded-lg bg-white/5 px-2.5 py-1.5 text-[11px]">
+                        <p>Buildings: <span className="font-semibold">{bitcoinResult.buildingCount}</span></p>
+                        {bitcoinResult.nearestSubstation && (
+                          <p>
+                            Nearest sub: <span className="font-semibold">{bitcoinResult.nearestSubstation}</span>
+                            {bitcoinResult.nearestDistM != null && ` (${fmtDistance(bitcoinResult.nearestDistM)})`}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </>
         )}
 
@@ -1624,19 +1576,18 @@ export function MapPage() {
           <div className="relative h-[55vh] w-full">
             <div ref={containerRef} className="h-full w-full overflow-hidden rounded-3xl border border-white/15" />
 
-            <div className="absolute left-3 top-3 z-10">
-              <button
-                onClick={() => setLayersOpen((v) => !v)}
-                title="Map layers"
-                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 bg-ink-900/80 text-white/80 backdrop-blur-sm"
-              >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-                </svg>
-              </button>
-
+            <div className="absolute bottom-3 left-3 z-10">
               {layersOpen && (
-                <GlassPanel className="mt-2 max-h-[48vh] w-64 overflow-y-auto !p-3 text-xs">
+                <div className="mb-2 max-h-[48vh] w-64 overflow-y-auto rounded-2xl border border-white/15 bg-ink-900/95 p-3 text-xs text-white/85 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.6)] backdrop-blur-xl">
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="font-display text-sm font-semibold text-white">Legends</p>
+                    <button onClick={() => setLayersOpen(false)} className="text-white/40 hover:text-white">
+                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M6 6l12 12M18 6 6 18" />
+                      </svg>
+                    </button>
+                  </div>
+
                   <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/45">Map</p>
                   <div className="mb-3 flex gap-1.5">
                     {(['normal', 'satellite'] as const).map((m) => (
@@ -1650,36 +1601,37 @@ export function MapPage() {
                     ))}
                   </div>
 
-                  <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/45">Layers — Universal</p>
+                  <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/45">Layers</p>
                   <div className="mb-3 space-y-1">
                     {(
                       [
-                        ['healthySites', 'Healthy sites'],
-                        ['congestedSites', 'Congested sites'],
-                        ['heatmap', 'Heatmap (congested)'],
-                        ['coverage5g', '5G coverage'],
-                        ['coverage4g', '4G coverage'],
-                        ['coverage3g', '3G coverage'],
-                        ['coverage2g', '2G coverage'],
-                        ['signalHigh', 'Signal (-100 to -120)'],
-                        ['signalMid', 'Signal (-121 to -130)'],
-                        ['signalLow', 'Signal (<-130)'],
+                        ['healthySites', 'Healthy sites', <span key="sw" className="h-2.5 w-2.5 rounded-full bg-[#3b82f6]" />],
+                        ['congestedSites', 'Congested sites', <span key="sw" className="h-2.5 w-2.5 rounded-full bg-[#dc2626]" />],
+                        ['heatmap', 'Heatmap (congested)', <span key="sw" className="h-2.5 w-5 rounded-sm" style={{ background: 'linear-gradient(90deg,#1d4ed8,#22d3ee,#facc15,#fb923c,#dc2626)' }} />],
+                        ['coverage5g', '5G coverage', <span key="sw" className="h-2.5 w-2.5 rounded-full" style={{ background: TECH_COLORS['5G'] }} />],
+                        ['coverage4g', '4G coverage', <span key="sw" className="h-2.5 w-2.5 rounded-full" style={{ background: TECH_COLORS['4G'] }} />],
+                        ['coverage3g', '3G coverage', <span key="sw" className="h-2.5 w-2.5 rounded-full" style={{ background: TECH_COLORS['3G'] }} />],
+                        ['coverage2g', '2G coverage', <span key="sw" className="h-2.5 w-2.5 rounded-full" style={{ background: TECH_COLORS['2G'] }} />],
+                        ['signalHigh', 'Signal (-100 to -120)', <span key="sw" className="h-2.5 w-2.5 rounded-full bg-[#facc15]" />],
+                        ['signalMid', 'Signal (-121 to -130)', <span key="sw" className="h-2.5 w-2.5 rounded-full bg-[#f97316]" />],
+                        ['signalLow', 'Signal (<-130)', <span key="sw" className="h-2.5 w-2.5 rounded-full bg-[#dc2626]" />],
                       ] as const
-                    ).map(([key, label]) => (
-                      <label key={key} className="flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-white/5">
+                    ).map(([key, label, swatch]) => (
+                      <label key={key} className={`flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-white/10 ${layerToggles[key] ? '' : 'opacity-50'}`}>
                         <input type="checkbox" checked={layerToggles[key]} onChange={() => toggleLayer(key)} className="accent-sky-400" />
+                        {swatch}
                         {label}
                       </label>
                     ))}
                   </div>
 
-                  <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/45">Layers — GeoServer</p>
+                  <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/45">GeoServer</p>
                   {geoserverLayerList.length === 0 ? (
                     <p className="text-white/40">No layers published (GeoServer not reachable, or nothing published yet).</p>
                   ) : (
                     <div className="space-y-1">
                       {geoserverLayerList.map((layer) => (
-                        <label key={layer.name} className="flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-white/5">
+                        <label key={layer.name} className={`flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-white/10 ${activeGeoserverLayers.has(layer.name) ? '' : 'opacity-50'}`}>
                           <input
                             type="checkbox"
                             checked={activeGeoserverLayers.has(layer.name)}
@@ -1691,8 +1643,18 @@ export function MapPage() {
                       ))}
                     </div>
                   )}
-                </GlassPanel>
+                </div>
               )}
+
+              <button
+                onClick={() => setLayersOpen((v) => !v)}
+                title="Legends"
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 bg-ink-900/90 text-white/80 backdrop-blur-sm"
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                </svg>
+              </button>
             </div>
           </div>
         )}
@@ -1725,6 +1687,11 @@ export function MapPage() {
               <span className="text-white/55">Congested sites</span>
               <span className="font-semibold text-red-300">{overview?.total_congested_sites ?? '—'}</span>
             </div>
+            <p className="text-[10px] text-white/35">
+              The viewport panel below and the map's marker count can be lower than this — a known
+              gap in the source data means some sites with congestion records have no coordinates,
+              so they can't be plotted or counted in any viewport.
+            </p>
             <div>
               <p className="text-white/55">Total CAPEX needed</p>
               <p className="font-semibold">{fmtCurrency(overview?.total_capex)}</p>
@@ -1732,21 +1699,32 @@ export function MapPage() {
             <div className="border-t border-white/10 pt-2.5">
               <p className="mb-1 text-white/55">Worst congested sectors</p>
               {overview && overview.worst_congested_sectors.length > 0 ? (
-                <ul className="max-h-40 space-y-1 overflow-y-auto">
-                  {overview.worst_congested_sectors.map((s, i) => (
-                    <li key={s.zoom_sector_id}>
-                      <button
-                        onClick={() => panTo(s.latitude, s.longitude)}
-                        disabled={s.latitude == null}
-                        className="w-full rounded-lg px-1.5 py-1 text-left text-xs hover:bg-white/10 disabled:cursor-default disabled:hover:bg-transparent"
-                      >
-                        <span className="text-white/40">{i + 1}.</span>{' '}
-                        <span className="font-semibold">{s.zoom_sector_id}</span>
-                        <span className="text-white/55"> ({s.region}) · {s.congested_weeks} wks</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                <div className="max-h-40 overflow-y-auto rounded-lg bg-white/5">
+                  <table className="w-full text-left text-[11px]">
+                    <thead className="sticky top-0 bg-ink-900/95 text-white/40">
+                      <tr>
+                        <th className="px-2 py-1 font-normal">#</th>
+                        <th className="px-2 py-1 font-normal">Sector</th>
+                        <th className="px-2 py-1 font-normal">Region</th>
+                        <th className="px-2 py-1 text-right font-normal">Weeks</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {overview.worst_congested_sectors.map((s, i) => (
+                        <tr
+                          key={s.zoom_sector_id}
+                          onClick={() => panTo(s.latitude, s.longitude)}
+                          className={`border-t border-white/5 ${s.latitude != null ? 'cursor-pointer hover:bg-white/10' : 'opacity-50'}`}
+                        >
+                          <td className="px-2 py-1 text-white/40">{i + 1}</td>
+                          <td className="px-2 py-1 font-semibold">{s.zoom_sector_id}</td>
+                          <td className="px-2 py-1 text-white/55">{s.region}</td>
+                          <td className="px-2 py-1 text-right text-white/55">{s.congested_weeks}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               ) : (
                 <p className="text-xs text-white/40">—</p>
               )}
@@ -1754,21 +1732,32 @@ export function MapPage() {
             <div>
               <p className="mb-1 text-white/55">Worst Ookla clusters</p>
               {overview && overview.worst_ookla_clusters.length > 0 ? (
-                <ul className="max-h-40 space-y-1 overflow-y-auto">
-                  {overview.worst_ookla_clusters.map((c, i) => (
-                    <li key={c.cluster_id}>
-                      <button
-                        onClick={() => panTo(c.latitude, c.longitude)}
-                        disabled={c.latitude == null}
-                        className="w-full rounded-lg px-1.5 py-1 text-left text-xs hover:bg-white/10 disabled:cursor-default disabled:hover:bg-transparent"
-                      >
-                        <span className="text-white/40">{i + 1}.</span>{' '}
-                        <span className="font-semibold">#{c.cluster_id}</span>
-                        <span className="text-white/55"> · {c.point_count} pts · {fmt(c.avg_signal)} dBm</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                <div className="max-h-40 overflow-y-auto rounded-lg bg-white/5">
+                  <table className="w-full text-left text-[11px]">
+                    <thead className="sticky top-0 bg-ink-900/95 text-white/40">
+                      <tr>
+                        <th className="px-2 py-1 font-normal">#</th>
+                        <th className="px-2 py-1 font-normal">Cluster</th>
+                        <th className="px-2 py-1 text-right font-normal">Points</th>
+                        <th className="px-2 py-1 text-right font-normal">Avg dBm</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {overview.worst_ookla_clusters.map((c, i) => (
+                        <tr
+                          key={c.cluster_id}
+                          onClick={() => panTo(c.latitude, c.longitude)}
+                          className={`border-t border-white/5 ${c.latitude != null ? 'cursor-pointer hover:bg-white/10' : 'opacity-50'}`}
+                        >
+                          <td className="px-2 py-1 text-white/40">{i + 1}</td>
+                          <td className="px-2 py-1 font-semibold">#{c.cluster_id}</td>
+                          <td className="px-2 py-1 text-right text-white/55">{c.point_count}</td>
+                          <td className="px-2 py-1 text-right text-white/55">{fmt(c.avg_signal)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               ) : (
                 <p className="text-xs text-white/40">—</p>
               )}
@@ -1776,21 +1765,32 @@ export function MapPage() {
             <div>
               <p className="mb-1 text-white/55">Worst MR clusters</p>
               {overview && overview.worst_mr_clusters.length > 0 ? (
-                <ul className="max-h-40 space-y-1 overflow-y-auto">
-                  {overview.worst_mr_clusters.map((c, i) => (
-                    <li key={c.cluster_id}>
-                      <button
-                        onClick={() => panTo(c.latitude, c.longitude)}
-                        disabled={c.latitude == null}
-                        className="w-full rounded-lg px-1.5 py-1 text-left text-xs hover:bg-white/10 disabled:cursor-default disabled:hover:bg-transparent"
-                      >
-                        <span className="text-white/40">{i + 1}.</span>{' '}
-                        <span className="font-semibold">#{c.cluster_id}</span>
-                        <span className="text-white/55"> · {c.point_count} pts · {fmt(c.avg_signal)} dBm</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                <div className="max-h-40 overflow-y-auto rounded-lg bg-white/5">
+                  <table className="w-full text-left text-[11px]">
+                    <thead className="sticky top-0 bg-ink-900/95 text-white/40">
+                      <tr>
+                        <th className="px-2 py-1 font-normal">#</th>
+                        <th className="px-2 py-1 font-normal">Cluster</th>
+                        <th className="px-2 py-1 text-right font-normal">Points</th>
+                        <th className="px-2 py-1 text-right font-normal">Avg dBm</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {overview.worst_mr_clusters.map((c, i) => (
+                        <tr
+                          key={c.cluster_id}
+                          onClick={() => panTo(c.latitude, c.longitude)}
+                          className={`border-t border-white/5 ${c.latitude != null ? 'cursor-pointer hover:bg-white/10' : 'opacity-50'}`}
+                        >
+                          <td className="px-2 py-1 text-white/40">{i + 1}</td>
+                          <td className="px-2 py-1 font-semibold">#{c.cluster_id}</td>
+                          <td className="px-2 py-1 text-right text-white/55">{c.point_count}</td>
+                          <td className="px-2 py-1 text-right text-white/55">{fmt(c.avg_signal)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               ) : (
                 <p className="text-xs text-white/40">—</p>
               )}
@@ -1915,120 +1915,56 @@ export function MapPage() {
         </div>
       )}
 
-      {activeToolPanel === 'genset' && (
+      {activeToolPanel === 'genset-bulk' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/60 backdrop-blur-sm">
           <GlassPanel className="w-full max-w-sm">
-            <p className="mb-1 font-display text-sm font-semibold">Genset/substation routing</p>
+            <p className="mb-1 font-display text-sm font-semibold">Genset/substation routing — bulk</p>
             <p className="mb-3.5 text-[11px] text-white/40">
-              {gensetMode === 'single' ? 'Single site' : 'Bulk (xlsx/csv)'} · substations from{' '}
-              {fixedLayers ? `"${fixedLayers.substations_layer}"` : 'GeoServer'}
+              substations from {fixedLayers ? `"${fixedLayers.substations_layer}"` : 'GeoServer'}
             </p>
-
-            {gensetMode === 'single' && (
-              <>
-                <div className="mb-3 flex gap-1.5">
-                  <button
-                    onClick={() => {
-                      setGensetPickMode((v) => !v)
-                      setGensetPickedLatLng(null)
-                    }}
-                    className={`flex-1 rounded-xl px-3 py-2 text-xs font-semibold ${
-                      gensetPickMode ? 'bg-sky-400 text-ink-900' : 'border border-white/20 text-white/70'
-                    }`}
-                  >
-                    {gensetPickMode ? 'Click a point on the map…' : 'Click site on map'}
-                  </button>
-                  {gensetPickedLatLng && (
-                    <button
-                      onClick={() => setGensetPickedLatLng(null)}
-                      className="rounded-xl border border-white/20 px-3 py-2 text-xs font-semibold text-white/70"
-                    >
-                      Clear pin
-                    </button>
-                  )}
-                </div>
-                {gensetPickedLatLng ? (
-                  <p className="mb-3 rounded-xl bg-white/5 px-3 py-2 text-xs text-white/70">
-                    Pinned: {gensetPickedLatLng[0].toFixed(5)}, {gensetPickedLatLng[1].toFixed(5)}
-                  </p>
-                ) : (
-                  <div className="mb-3">
-                    <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
-                      Or search by site ID
-                    </label>
-                    <input
-                      value={gensetSiteId}
-                      onChange={(e) => setGensetSiteId(e.target.value)}
-                      placeholder="e.g. N00377"
-                      className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
-                    />
-                  </div>
-                )}
-                {gensetStatus && <p className="mb-3 text-xs text-white/70">{gensetStatus}</p>}
-                {gensetResult && gensetResult.results.length > 0 && (
-                  <ul className="mb-3 max-h-40 space-y-1 overflow-y-auto text-xs">
-                    {gensetResult.results.map((r) => (
-                      <li key={r.osm_id} className="rounded-lg bg-white/5 px-2.5 py-1.5">
-                        <span className="font-semibold">{r.name}</span>
-                        <span className="text-white/55"> — {r.road_dist_km} km by road</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </>
-            )}
-
-            {gensetMode === 'bulk' && (
-              <>
-                <div className="mb-3">
-                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
-                    Spreadsheet with a site_id column
-                  </label>
-                  <input
-                    type="file"
-                    accept=".xlsx,.xls,.csv"
-                    onChange={(e) => setGensetBulkFile(e.target.files?.[0] ?? null)}
-                    className="w-full text-xs text-white/70"
-                  />
-                  {gensetBulkFile && <p className="mt-0.5 text-[11px] text-emerald-300">{gensetBulkFile.name}</p>}
-                </div>
-                {gensetStatus && <p className="mb-3 text-xs text-white/70">{gensetStatus}</p>}
-                {gensetBulkResults.length > 0 && (
-                  <div className="mb-3 max-h-48 overflow-y-auto rounded-xl bg-white/5">
-                    <table className="w-full text-left text-xs">
-                      <thead className="sticky top-0 bg-ink-900/95 text-white/45">
-                        <tr>
-                          <th className="px-2.5 py-1.5">Site ID</th>
-                          <th className="px-2.5 py-1.5">Nearest substation</th>
-                          <th className="px-2.5 py-1.5">Distance</th>
+            <div className="mb-3">
+              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
+                Spreadsheet with a site_id column
+              </label>
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={(e) => setGensetBulkFile(e.target.files?.[0] ?? null)}
+                className="w-full text-xs text-white/70"
+              />
+              {gensetBulkFile && <p className="mt-0.5 text-[11px] text-emerald-300">{gensetBulkFile.name}</p>}
+            </div>
+            {gensetStatus && <p className="mb-3 text-xs text-white/70">{gensetStatus}</p>}
+            {gensetBulkResults.length > 0 && (
+              <div className="mb-3 max-h-48 overflow-y-auto rounded-xl bg-white/5">
+                <table className="w-full text-left text-xs">
+                  <thead className="sticky top-0 bg-ink-900/95 text-white/45">
+                    <tr>
+                      <th className="px-2.5 py-1.5">Site ID</th>
+                      <th className="px-2.5 py-1.5">Nearest substation</th>
+                      <th className="px-2.5 py-1.5">Distance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {gensetBulkResults.map((r) => {
+                      const best = r.result?.results[0]
+                      return (
+                        <tr key={r.siteId} className="border-t border-white/5">
+                          <td className="px-2.5 py-1.5 font-semibold">{r.siteId}</td>
+                          <td className="px-2.5 py-1.5 text-white/70">{best ? best.name : r.error ?? '—'}</td>
+                          <td className="px-2.5 py-1.5 text-white/70">{best ? `${best.road_dist_km} km` : '—'}</td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {gensetBulkResults.map((r) => {
-                          const best = r.result?.results[0]
-                          return (
-                            <tr key={r.siteId} className="border-t border-white/5">
-                              <td className="px-2.5 py-1.5 font-semibold">{r.siteId}</td>
-                              <td className="px-2.5 py-1.5 text-white/70">{best ? best.name : r.error ?? '—'}</td>
-                              <td className="px-2.5 py-1.5 text-white/70">{best ? `${best.road_dist_km} km` : '—'}</td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
-
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => {
                   setActiveToolPanel('none')
-                  setGensetResult(null)
                   setGensetStatus(null)
-                  setGensetPickMode(false)
-                  setGensetPickedLatLng(null)
                   setGensetBulkResults([])
                 }}
                 className="rounded-xl border border-white/20 px-4 py-2 text-sm font-semibold text-white/70"
@@ -2036,10 +1972,10 @@ export function MapPage() {
                 Close
               </button>
               <button
-                onClick={gensetMode === 'single' ? runGenset : runGensetBulk}
+                onClick={runGensetBulk}
                 className="rounded-xl bg-gradient-to-r from-accent-400 to-accent-500 px-4 py-2 text-sm font-semibold text-ink-900"
               >
-                {gensetMode === 'single' ? 'Find route' : 'Process file'}
+                Process file
               </button>
             </div>
           </GlassPanel>
@@ -2119,53 +2055,6 @@ export function MapPage() {
         </div>
       )}
 
-      {activeToolPanel === 'bitcoin' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/60 backdrop-blur-sm">
-          <GlassPanel className="w-full max-w-sm">
-            <p className="mb-1 font-display text-sm font-semibold">Unauthorized power-draw check</p>
-            <p className="mb-3.5 text-[11px] text-white/40">
-              {fixedLayers ? `Buildings: "${fixedLayers.buildings_layer}" · Substations: "${fixedLayers.substations_layer}"` : 'Loading GeoServer layer configuration…'}
-            </p>
-            <div className="mb-3">
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
-                Site IDs (2-3, comma-separated)
-              </label>
-              <input
-                value={bitcoinSiteIds}
-                onChange={(e) => setBitcoinSiteIds(e.target.value)}
-                placeholder="e.g. N00377, N00412"
-                className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
-              />
-            </div>
-            {bitcoinStatus && <p className="mb-3 text-xs text-white/70">{bitcoinStatus}</p>}
-            {bitcoinResult && (
-              <div className="mb-3 rounded-xl bg-white/5 p-2.5 text-xs">
-                <p>Candidate buildings: <span className="font-semibold">{bitcoinResult.buildingCount}</span></p>
-                {bitcoinResult.nearestSubstation && (
-                  <p>
-                    Nearest substation: <span className="font-semibold">{bitcoinResult.nearestSubstation}</span>
-                    {bitcoinResult.nearestDistM != null && ` (${fmtDistance(bitcoinResult.nearestDistM)})`}
-                  </p>
-                )}
-              </div>
-            )}
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => { setActiveToolPanel('none'); setBitcoinResult(null); setBitcoinStatus(null) }}
-                className="rounded-xl border border-white/20 px-4 py-2 text-sm font-semibold text-white/70"
-              >
-                Close
-              </button>
-              <button
-                onClick={runBitcoinMining}
-                className="rounded-xl bg-gradient-to-r from-accent-400 to-accent-500 px-4 py-2 text-sm font-semibold text-ink-900"
-              >
-                Check
-              </button>
-            </div>
-          </GlassPanel>
-        </div>
-      )}
     </div>
   )
 }

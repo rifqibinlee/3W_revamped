@@ -3,8 +3,9 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { GlassPanel } from '../components/GlassPanel'
 import { api, ApiError, type AnnotationOut, type ProjectOut } from '../lib/api'
+import { addStatusLayer, BASE_STYLE } from '../lib/mapLayers'
 
-const STYLE_URL = 'https://demotiles.maplibre.org/style.json'
+const STYLE_URL = BASE_STYLE
 const DEFAULT_CENTER: [number, number] = [101.5, 3.1]
 
 export function Notes() {
@@ -52,6 +53,9 @@ export function Notes() {
     })
     mapRef.current = map
     map.addControl(new maplibregl.NavigationControl(), 'top-right')
+    map.on('load', () => {
+      api.currentStatus().then((rows) => addStatusLayer(map, 'note-sites', rows)).catch(() => undefined)
+    })
     return () => {
       map.remove()
       mapRef.current = null

@@ -22,16 +22,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   const navItems = user?.role === 'admin' ? [...NAV_ITEMS, ...ADMIN_NAV_ITEMS] : NAV_ITEMS
 
   return (
-    <div className="relative min-h-screen">
+    <div className="relative min-h-screen pb-9">
       <AnimatedBackground />
-      <div className="relative mx-auto max-w-6xl px-7 py-6">
+      <div className="relative mx-auto max-w-[1600px] px-7 py-6">
         <header className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <img src={logo} alt="3W+" className="h-8 w-8" />
-            <div className="leading-tight">
-              <span className="block font-display text-base font-semibold">3W+</span>
-              <span className="block text-[10px] text-white/45">Brought to You by Advanced Analytics</span>
-            </div>
+            <span className="font-display text-base font-semibold">3W+</span>
           </div>
           <nav className="flex items-center gap-6 text-sm text-white/75">
             {navItems.map((item) => (
@@ -56,6 +53,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main>{children}</main>
       </div>
       <AIPanel />
+      <p className="fixed inset-x-0 bottom-0 z-30 bg-ink-950/80 py-1.5 text-center text-[10px] text-white/45 backdrop-blur-sm">
+        Brought to You by Advanced Analytics
+      </p>
     </div>
   )
 }

@@ -123,6 +123,53 @@ def site_forecast(site_id: str, metric: str, horizon_weeks: int = 8) -> dict:
     return {"site_id": site_id.upper(), "metric": metric, "actual": actual, "forecast": forecast}
 
 
+def sector_current_status(zoom_sector_id: str) -> dict | None:
+    """Latest-week congestion status for one specific SECTOR (not site)
+    — used by the agent's tools, which look up a sector by its exact
+    zoom_sector_id rather than wanting the per-site rollup current_status()
+    returns for the map."""
+    congestion_path = _parquet_path("congestion_analysis")
+    if not congestion_path.exists():
+        return None
+    con = get_connection()
+    try:
+        row = con.execute(
+            f"""
+            WITH latest AS (
+                SELECT *, row_number() OVER (
+                    PARTITION BY zoom_sector_id ORDER BY year DESC, week DESC
+                ) AS rn FROM read_parquet('{congestion_path}')
+            )
+            SELECT site_id, zoom_sector_id, region, congested FROM latest WHERE rn = 1 AND zoom_sector_id = ?
+            """,
+            [zoom_sector_id],
+        ).fetchone()
+        if not row:
+            return None
+        return {"site_id": row[0], "zoom_sector_id": row[1], "region": row[2], "congested": row[3]}
+    finally:
+        con.close()
+
+
+def sector_forecast_status(zoom_sector_id: str, year: int, week: int) -> dict | None:
+    """Forecast status for one specific SECTOR at a year/week — same
+    per-sector vs. per-site distinction as sector_current_status()."""
+    forecast_path = _parquet_path("forecast_results")
+    if not forecast_path.exists():
+        return None
+    con = get_connection()
+    try:
+        row = con.execute(
+            f"SELECT zoom_sector_id, congested FROM read_parquet('{forecast_path}') WHERE zoom_sector_id = ? AND year = ? AND week = ?",
+            [zoom_sector_id, year, week],
+        ).fetchone()
+        if not row:
+            return None
+        return {"zoom_sector_id": row[0], "congested": row[1], "year": year, "week": week}
+    finally:
+        con.close()
+
+
 def current_status() -> list[dict]:
     """Latest week's congestion status per site, joined with coordinates.
 

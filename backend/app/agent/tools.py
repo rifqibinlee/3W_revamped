@@ -19,22 +19,16 @@ from app.pricing import service as pricing_service
 def get_current_congestion_status(zoom_sector_id: str) -> dict:
     """Look up the current (latest week) congestion status for a specific
     sector by its zoom_sector_id (e.g. 'SITE001_Macro_1')."""
-    rows = analytics_service.current_status()
-    for row in rows:
-        if row.get("zoom_sector_id") == zoom_sector_id:
-            return row
-    return {"error": f"No congestion data found for sector {zoom_sector_id}"}
+    row = analytics_service.sector_current_status(zoom_sector_id)
+    return row or {"error": f"No congestion data found for sector {zoom_sector_id}"}
 
 
 @tool
 def get_forecast_status(zoom_sector_id: str, year: int, week: int) -> dict:
     """Look up the forecasted congestion status for a sector at a future
     year/week (the planning UI offers quarter weeks 13, 26, 39, 52)."""
-    rows = analytics_service.forecast_status(year, week)
-    for row in rows:
-        if row.get("zoom_sector_id") == zoom_sector_id:
-            return row
-    return {"error": f"No forecast found for sector {zoom_sector_id} at {year} week {week}"}
+    row = analytics_service.sector_forecast_status(zoom_sector_id, year, week)
+    return row or {"error": f"No forecast found for sector {zoom_sector_id} at {year} week {week}"}
 
 
 @tool

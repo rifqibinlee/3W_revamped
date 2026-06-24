@@ -27,13 +27,13 @@ export function AIPanel() {
     <>
       <button
         onClick={() => setOpen(!open)}
-        title="Network ops assistant"
+        title="Graham, the network ops assistant"
         style={{ writingMode: 'vertical-rl' }}
         className={`fixed right-0 top-1/2 z-40 flex -translate-y-1/2 items-center gap-2 rounded-l-xl border border-r-0 border-white/20 px-2 py-3 text-xs font-semibold backdrop-blur-xl transition-colors ${
           open ? 'bg-accent-400 text-ink-900' : 'bg-ink-900/85 text-white/70 hover:text-white'
         }`}
       >
-        Assistant
+        Graham
       </button>
 
       {open && (
@@ -41,7 +41,7 @@ export function AIPanel() {
           <div className="absolute inset-0 bg-ink-950/60 backdrop-blur-sm lg:hidden" onClick={() => setOpen(false)} />
           <GlassPanel className="relative z-10 flex h-full w-full max-w-sm flex-col overflow-hidden lg:h-auto lg:w-80">
             <div className="mb-3 flex items-center justify-between">
-              <p className="font-display text-sm font-semibold">Network ops assistant</p>
+              <p className="font-display text-sm font-semibold">Graham</p>
               <button onClick={() => setOpen(false)} className="text-white/50 hover:text-white">
                 <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M6 6l12 12M18 6 6 18" />
@@ -78,7 +78,7 @@ export function AIPanel() {
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask the agent…"
+                placeholder="Ask Graham…"
                 className="flex-1 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
               />
               <button
