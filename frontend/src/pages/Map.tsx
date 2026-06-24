@@ -20,7 +20,25 @@ import {
   type UserOut,
 } from '../lib/api'
 
-const STYLE_URL = 'https://demotiles.maplibre.org/style.json'
+// The demotiles vector style this used to point at has no roads, rivers,
+// or place labels at all (it's a bare country-outline demo style) — not
+// usable as a real "normal" basemap. CartoDB Voyager is a free,
+// no-API-key raster basemap with roads/water/labels, similar detail
+// level to the legacy app's normal map (which it never actually had —
+// legacy always showed Esri satellite + CartoDB label-only overlay, see
+// the 'satellite-base' source below for that exact stack).
+const STYLE_URL: maplibregl.StyleSpecification = {
+  version: 8,
+  sources: {
+    'carto-voyager': {
+      type: 'raster',
+      tiles: ['https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png'],
+      tileSize: 256,
+      attribution: '© OpenStreetMap contributors © CARTO',
+    },
+  },
+  layers: [{ id: 'carto-voyager-layer', type: 'raster', source: 'carto-voyager' }],
+}
 // Centered on the real site distribution across Peninsular Malaysia
 // (lat 1.3-6.2, lng 101.6-104.3), not just the Klang Valley — zoom 7
 // keeps the whole network visible by default instead of an empty patch.
@@ -216,86 +234,108 @@ function siteDetailHtml(siteId: string, detail: SiteDetail | null, loading: bool
 // color is always unambiguous instead of needing a mixed-state color.
 // maxClusterRadius:60 in the legacy Leaflet config maps directly to
 // MapLibre's clusterRadius.
+// Healthy and congested sites cluster together in one group (separate
+// groups used to overlap and visually compete at the same spot) — the
+// cluster bubble's color is a blue→red gradient driven by what
+// fraction of the cluster is congested, via clusterProperties summing
+// a 0/1 "congested" flag during clustering. The "glassy" look is two
+// circle layers: a soft blurred halo underneath, a crisper translucent
+// disc with a white rim on top.
+const CONGESTED_RATIO_COLOR: maplibregl.ExpressionSpecification = [
+  'interpolate', ['linear'], ['/', ['get', 'congestedSum'], ['get', 'point_count']],
+  0, '#3b82f6', 0.5, '#a855f7', 1, '#dc2626',
+]
+
 function addStatusLayer(map: maplibregl.Map, sourceId: string, rows: CurrentStatusRow[], onSiteClick?: (siteId: string) => void) {
-  const normalGeojson = statusGeoJson(rows.filter((r) => !r.congested))
-  const congestedGeojson = statusGeoJson(rows.filter((r) => r.congested))
+  const data = statusGeoJson(rows)
+  for (const f of data.features) {
+    (f.properties as Record<string, unknown>).congestedFlag = f.properties?.congested ? 1 : 0
+  }
 
-  const normalId = `${sourceId}-normal`
-  const congestedId = `${sourceId}-congested`
-
-  const existing = map.getSource(normalId) as maplibregl.GeoJSONSource | undefined
+  const existing = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined
   if (existing) {
-    existing.setData(normalGeojson)
-    ;(map.getSource(congestedId) as maplibregl.GeoJSONSource).setData(congestedGeojson)
+    existing.setData(data)
     return
   }
 
-  const buildBucket = (id: string, data: GeoJSON.FeatureCollection, color: string) => {
-    map.addSource(id, { type: 'geojson', data, cluster: true, clusterMaxZoom: 14, clusterRadius: 60 })
-    map.addLayer({
-      id: `${id}-cluster-circle`,
-      type: 'circle',
-      source: id,
-      filter: ['has', 'point_count'],
-      paint: {
-        'circle-radius': ['step', ['get', 'point_count'], 16, 25, 20, 100, 26],
-        'circle-color': color,
-        'circle-opacity': 0.85,
-        'circle-stroke-width': 2,
-        'circle-stroke-color': '#ffffff',
-      },
-    })
-    map.addLayer({
-      id: `${id}-cluster-count`,
-      type: 'symbol',
-      source: id,
-      filter: ['has', 'point_count'],
-      layout: { 'text-field': '{point_count_abbreviated}', 'text-size': 12, 'text-font': ['Open Sans Bold'] },
-      paint: { 'text-color': '#ffffff' },
-    })
-    map.addLayer({
-      id: `${id}-point`,
-      type: 'circle',
-      source: id,
-      filter: ['!', ['has', 'point_count']],
-      paint: {
-        'circle-radius': 6,
-        'circle-color': color,
-        'circle-stroke-width': 2,
-        'circle-stroke-color': '#ffffff',
-      },
-    })
+  map.addSource(sourceId, {
+    type: 'geojson', data, cluster: true, clusterMaxZoom: 14, clusterRadius: 60,
+    clusterProperties: { congestedSum: ['+', ['get', 'congestedFlag']] },
+  })
 
-    map.on('mouseenter', `${id}-cluster-circle`, () => (map.getCanvas().style.cursor = 'pointer'))
-    map.on('mouseleave', `${id}-cluster-circle`, () => (map.getCanvas().style.cursor = ''))
-    map.on('mouseenter', `${id}-point`, () => (map.getCanvas().style.cursor = 'pointer'))
-    map.on('mouseleave', `${id}-point`, () => (map.getCanvas().style.cursor = ''))
+  map.addLayer({
+    id: `${sourceId}-cluster-glow`,
+    type: 'circle',
+    source: sourceId,
+    filter: ['has', 'point_count'],
+    paint: {
+      'circle-radius': ['step', ['get', 'point_count'], 24, 25, 30, 100, 38],
+      'circle-color': CONGESTED_RATIO_COLOR,
+      'circle-opacity': 0.35,
+      'circle-blur': 1,
+    },
+  })
+  map.addLayer({
+    id: `${sourceId}-cluster-circle`,
+    type: 'circle',
+    source: sourceId,
+    filter: ['has', 'point_count'],
+    paint: {
+      'circle-radius': ['step', ['get', 'point_count'], 16, 25, 20, 100, 26],
+      'circle-color': CONGESTED_RATIO_COLOR,
+      'circle-opacity': 0.55,
+      'circle-stroke-width': 1.5,
+      'circle-stroke-color': 'rgba(255,255,255,0.75)',
+    },
+  })
+  map.addLayer({
+    id: `${sourceId}-cluster-count`,
+    type: 'symbol',
+    source: sourceId,
+    filter: ['has', 'point_count'],
+    layout: { 'text-field': '{point_count_abbreviated}', 'text-size': 12, 'text-font': ['Open Sans Bold'] },
+    paint: { 'text-color': '#ffffff' },
+  })
+  map.addLayer({
+    id: `${sourceId}-point`,
+    type: 'circle',
+    source: sourceId,
+    filter: ['!', ['has', 'point_count']],
+    paint: {
+      'circle-radius': 6,
+      'circle-color': ['case', ['get', 'congested'], '#dc2626', '#3b82f6'],
+      'circle-opacity': 0.7,
+      'circle-stroke-width': 1.5,
+      'circle-stroke-color': 'rgba(255,255,255,0.75)',
+    },
+  })
 
-    map.on('click', `${id}-cluster-circle`, (e) => {
-      const f = e.features?.[0]
-      if (!f) return
-      const clusterId = (f.properties as { cluster_id: number }).cluster_id
-      const source = map.getSource(id) as maplibregl.GeoJSONSource
-      source.getClusterExpansionZoom(clusterId).then((zoom) => {
-        map.easeTo({ center: (f.geometry as GeoJSON.Point).coordinates as [number, number], zoom })
-      })
+  map.on('mouseenter', `${sourceId}-cluster-circle`, () => (map.getCanvas().style.cursor = 'pointer'))
+  map.on('mouseleave', `${sourceId}-cluster-circle`, () => (map.getCanvas().style.cursor = ''))
+  map.on('mouseenter', `${sourceId}-point`, () => (map.getCanvas().style.cursor = 'pointer'))
+  map.on('mouseleave', `${sourceId}-point`, () => (map.getCanvas().style.cursor = ''))
+
+  map.on('click', `${sourceId}-cluster-circle`, (e) => {
+    const f = e.features?.[0]
+    if (!f) return
+    const clusterId = (f.properties as { cluster_id: number }).cluster_id
+    const source = map.getSource(sourceId) as maplibregl.GeoJSONSource
+    source.getClusterExpansionZoom(clusterId).then((zoom) => {
+      map.easeTo({ center: (f.geometry as GeoJSON.Point).coordinates as [number, number], zoom })
     })
+  })
 
-    map.on('click', `${id}-point`, (e) => {
-      const f = e.features?.[0]
-      if (!f) return
-      const props = f.properties as { site_id: string }
-      const popup = new maplibregl.Popup().setLngLat(e.lngLat).setHTML(siteDetailHtml(props.site_id, null, true)).addTo(map)
-      api
-        .siteDetail(props.site_id)
-        .then((detail) => popup.setHTML(siteDetailHtml(props.site_id, detail, false)))
-        .catch(() => popup.setHTML(siteDetailHtml(props.site_id, null, false)))
-      onSiteClick?.(props.site_id)
-    })
-  }
-
-  buildBucket(normalId, normalGeojson, '#3b82f6')
-  buildBucket(congestedId, congestedGeojson, '#dc2626')
+  map.on('click', `${sourceId}-point`, (e) => {
+    const f = e.features?.[0]
+    if (!f) return
+    const props = f.properties as { site_id: string }
+    const popup = new maplibregl.Popup().setLngLat(e.lngLat).setHTML(siteDetailHtml(props.site_id, null, true)).addTo(map)
+    api
+      .siteDetail(props.site_id)
+      .then((detail) => popup.setHTML(siteDetailHtml(props.site_id, detail, false)))
+      .catch(() => popup.setHTML(siteDetailHtml(props.site_id, null, false)))
+    onSiteClick?.(props.site_id)
+  })
 }
 
 function annotationToFeature(a: AnnotationOut): Feature {
@@ -438,20 +478,29 @@ export function MapPage() {
   const [layersOpen, setLayersOpen] = useState(false)
   const [baseMap, setBaseMap] = useState<'normal' | 'satellite'>('normal')
   const [layerToggles, setLayerToggles] = useState({
-    sites: true, congestedSites: true, heatmap: false,
+    sites: true, heatmap: false,
     coverage2g: false, coverage3g: false, coverage4g: false, coverage5g: false,
     signalHigh: false, signalMid: false, signalLow: false,
   })
   const [geoserverLayerList, setGeoserverLayerList] = useState<GeoserverLayer[]>([])
   const [activeGeoserverLayers, setActiveGeoserverLayers] = useState<Set<string>>(new Set())
 
-  const [toolsMenuOpen, setToolsMenuOpen] = useState(false)
+  // Fixed layer names the Genset/Bitcoin-mining tools always query —
+  // not user-selectable (see backend Settings.geoserver_substations_layer
+  // / geoserver_buildings_layer).
+  const [fixedLayers, setFixedLayers] = useState<{ substations_layer: string; buildings_layer: string } | null>(null)
+
   const [activeToolPanel, setActiveToolPanel] = useState<'none' | 'genset' | 'cctv' | 'bitcoin'>('none')
 
+  const [gensetMenuOpen, setGensetMenuOpen] = useState(false)
+  const [gensetMode, setGensetMode] = useState<'single' | 'bulk'>('single')
   const [gensetSiteId, setGensetSiteId] = useState('')
-  const [gensetSubstationLayer, setGensetSubstationLayer] = useState('')
+  const [gensetPickMode, setGensetPickMode] = useState(false)
+  const [gensetPickedLatLng, setGensetPickedLatLng] = useState<[number, number] | null>(null)
+  const [gensetBulkFile, setGensetBulkFile] = useState<File | null>(null)
   const [gensetStatus, setGensetStatus] = useState<string | null>(null)
   const [gensetResult, setGensetResult] = useState<GensetRouteResult | null>(null)
+  const [gensetBulkResults, setGensetBulkResults] = useState<{ siteId: string; result: GensetRouteResult | null; error: string | null }[]>([])
 
   const [cctvBuildingFile, setCctvBuildingFile] = useState<File | null>(null)
   const [cctvParkingFile, setCctvParkingFile] = useState<File | null>(null)
@@ -461,8 +510,6 @@ export function MapPage() {
   const [cctvResult, setCctvResult] = useState<CctvRunResult | null>(null)
 
   const [bitcoinSiteIds, setBitcoinSiteIds] = useState('')
-  const [bitcoinBuildingLayer, setBitcoinBuildingLayer] = useState('')
-  const [bitcoinSubstationLayer, setBitcoinSubstationLayer] = useState('')
   const [bitcoinStatus, setBitcoinStatus] = useState<string | null>(null)
   const [bitcoinResult, setBitcoinResult] = useState<{ buildingCount: number; nearestSubstation: string | null; nearestDistM: number | null } | null>(null)
 
@@ -508,10 +555,14 @@ export function MapPage() {
       api.currentStatus().then((rows) => addStatusLayer(map, 'current-status', rows)).catch(() => undefined)
       setMapBounds(readBounds(map))
 
-      // Remember the demotiles base style's own layers so the
+      // Remember the normal-mode base style's own layers so the
       // satellite toggle can hide them without touching anything this
       // page adds on top (clusters, draw sketches, etc).
       baseLayerIdsRef.current = map.getStyle().layers.map((l) => l.id)
+      // Esri satellite imagery + CartoDB label-only overlay — the same
+      // two-layer stack the legacy app always rendered (it never had a
+      // separate "normal" mode; this rebuild adds that as a real
+      // alternative using CartoDB Voyager instead, see STYLE_URL above).
       map.addSource('satellite-base', {
         type: 'raster',
         tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
@@ -519,6 +570,13 @@ export function MapPage() {
         attribution: 'Esri',
       })
       map.addLayer({ id: 'satellite-base-layer', type: 'raster', source: 'satellite-base', layout: { visibility: 'none' } }, baseLayerIdsRef.current[0])
+      map.addSource('satellite-labels', {
+        type: 'raster',
+        tiles: ['https://a.basemaps.cartocdn.com/rastertiles/light_only_labels/{z}/{x}/{y}@2x.png'],
+        tileSize: 256,
+        attribution: '© OpenStreetMap contributors © CARTO',
+      })
+      map.addLayer({ id: 'satellite-labels-layer', type: 'raster', source: 'satellite-labels', layout: { visibility: 'none' } })
 
       map.addSource('heatmap-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
       map.addLayer({
@@ -526,9 +584,25 @@ export function MapPage() {
         type: 'heatmap',
         source: 'heatmap-source',
         layout: { visibility: 'none' },
+        // A small radius/intensity made this look like faint stains
+        // rather than a heatmap — bumped both up substantially and
+        // pushed the color ramp to go hot much earlier (matching the
+        // legacy gradient's blue-by-0.3/red-by-0.95 density curve)
+        // instead of staying transparent until density 0.5+.
         paint: {
-          'heatmap-radius': 24,
-          'heatmap-color': ['interpolate', ['linear'], ['heatmap-density'], 0, 'rgba(0,0,0,0)', 0.5, '#facc15', 1, '#dc2626'],
+          'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 0, 20, 9, 45, 15, 70],
+          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 1.5, 9, 3, 15, 4],
+          'heatmap-opacity': 0.9,
+          'heatmap-color': [
+            'interpolate', ['linear'], ['heatmap-density'],
+            0, 'rgba(0,0,0,0)',
+            0.1, '#1d4ed8',
+            0.3, '#22d3ee',
+            0.5, '#facc15',
+            0.7, '#fb923c',
+            0.9, '#dc2626',
+            1, '#7f1d1d',
+          ],
         },
       })
     })
@@ -734,23 +808,24 @@ export function MapPage() {
     if (!map || splitActive || !map.isStyleLoaded() || baseLayerIdsRef.current.length === 0) return
     const satelliteVisible = baseMap === 'satellite'
     map.setLayoutProperty('satellite-base-layer', 'visibility', satelliteVisible ? 'visible' : 'none')
+    map.setLayoutProperty('satellite-labels-layer', 'visibility', satelliteVisible ? 'visible' : 'none')
     for (const id of baseLayerIdsRef.current) {
       map.setLayoutProperty(id, 'visibility', satelliteVisible ? 'none' : 'visible')
     }
   }, [baseMap, splitActive, mapBounds])
 
-  // Sites / Congested sites / Heatmap toggles
+  // Sites / Heatmap toggles — healthy and congested sites now share one
+  // combined cluster source (see addStatusLayer), so "Sites" is a
+  // single on/off rather than two independent toggles.
   useEffect(() => {
     const map = mapRef.current
     if (!map || splitActive || !map.isStyleLoaded()) return
-    const normalVis = layerToggles.sites ? 'visible' : 'none'
-    const congestedVis = layerToggles.congestedSites ? 'visible' : 'none'
-    for (const suffix of ['cluster-circle', 'cluster-count', 'point']) {
-      if (map.getLayer(`current-status-normal-${suffix}`)) map.setLayoutProperty(`current-status-normal-${suffix}`, 'visibility', normalVis)
-      if (map.getLayer(`current-status-congested-${suffix}`)) map.setLayoutProperty(`current-status-congested-${suffix}`, 'visibility', congestedVis)
+    const sitesVis = layerToggles.sites ? 'visible' : 'none'
+    for (const suffix of ['cluster-glow', 'cluster-circle', 'cluster-count', 'point']) {
+      if (map.getLayer(`current-status-${suffix}`)) map.setLayoutProperty(`current-status-${suffix}`, 'visibility', sitesVis)
     }
     if (map.getLayer('heatmap-layer')) map.setLayoutProperty('heatmap-layer', 'visibility', layerToggles.heatmap ? 'visible' : 'none')
-  }, [layerToggles.sites, layerToggles.congestedSites, layerToggles.heatmap, splitActive, mapBounds])
+  }, [layerToggles.sites, layerToggles.heatmap, splitActive, mapBounds])
 
   // Heatmap data — fed from the same current-status rows already
   // fetched for the marker layers, just re-requested here since the
@@ -779,6 +854,7 @@ export function MapPage() {
     if (!anyOn) {
       for (const tech of ['2g', '3g', '4g', '5g']) {
         if (map.getLayer(`coverage-${tech}-fill`)) map.setLayoutProperty(`coverage-${tech}-fill`, 'visibility', 'none')
+        if (map.getLayer(`coverage-${tech}-dot`)) map.setLayoutProperty(`coverage-${tech}-dot`, 'visibility', 'none')
       }
       return
     }
@@ -796,13 +872,26 @@ export function MapPage() {
             features: techRows.map((r) => ({
               type: 'Feature',
               geometry: sectorWedgePolygon([r.longitude, r.latitude], r.coverage_radius_m, r.azimuth),
-              properties: {},
+              properties: { lng: r.longitude, lat: r.latitude },
             })),
+          }
+          // A real per-cell coverage radius (tens to low-thousands of
+          // meters) renders as a sub-pixel sliver at city/region zoom —
+          // the wedge fill alone made this look like it "shows
+          // nothing" until zoomed all the way into a single site. A
+          // small always-visible dot at the cell location guarantees
+          // the layer reads as present at any zoom; the wedge becomes
+          // visible on top once zoomed in far enough to matter.
+          const dotData: FeatureCollection = {
+            type: 'FeatureCollection',
+            features: techRows.map((r) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [r.longitude, r.latitude] }, properties: {} })),
           }
           const existing = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined
           if (existing) {
             existing.setData(data)
+            ;(map.getSource(`${sourceId}-dots`) as maplibregl.GeoJSONSource).setData(dotData)
             map.setLayoutProperty(`${sourceId}-fill`, 'visibility', toggleOn ? 'visible' : 'none')
+            map.setLayoutProperty(`${sourceId}-dot`, 'visibility', toggleOn ? 'visible' : 'none')
             continue
           }
           if (!map.isStyleLoaded()) continue
@@ -812,7 +901,15 @@ export function MapPage() {
             type: 'fill',
             source: sourceId,
             layout: { visibility: toggleOn ? 'visible' : 'none' },
-            paint: { 'fill-color': TECH_COLORS[tech], 'fill-opacity': 0.25 },
+            paint: { 'fill-color': TECH_COLORS[tech], 'fill-opacity': 0.35 },
+          })
+          map.addSource(`${sourceId}-dots`, { type: 'geojson', data: dotData })
+          map.addLayer({
+            id: `${sourceId}-dot`,
+            type: 'circle',
+            source: `${sourceId}-dots`,
+            layout: { visibility: toggleOn ? 'visible' : 'none' },
+            paint: { 'circle-radius': 4, 'circle-color': TECH_COLORS[tech], 'circle-stroke-width': 1, 'circle-stroke-color': '#ffffff' },
           })
         }
       }
@@ -867,6 +964,7 @@ export function MapPage() {
   // WMS raster tile source per layer the user actually toggles on.
   useEffect(() => {
     api.geoserverLayers().then(setGeoserverLayerList).catch(() => undefined)
+    api.geoserverFixedLayers().then(setFixedLayers).catch(() => undefined)
   }, [])
 
   useEffect(() => {
@@ -1007,32 +1105,44 @@ export function MapPage() {
     setPendingBufferCenter(null)
   }
 
-  // Genset/substation routing: site-by-site, no file upload needed —
-  // matches the legacy tool's single-site flow. Substation candidates
-  // come from a GeoServer layer the admin publishes (picked from the
-  // same layer list the Layers panel already fetches), not a
-  // third-party API — unlike the legacy app, this never sends real
-  // site coordinates outside our own infrastructure.
+  function panTo(lat: number | null, lng: number | null) {
+    if (lat == null || lng == null) return
+    const map = mapRef.current
+    if (!map) return
+    map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 14) })
+  }
+
+  // Genset/substation routing, single-site mode: either type a site ID
+  // or click a point on the map. Substation candidates come from the
+  // org's fixed GeoServer substations layer (not user-selectable),
+  // not a third-party API — unlike the legacy app, which queried the
+  // public Overpass API directly with real site coordinates.
   async function runGenset() {
     setGensetResult(null)
-    if (!gensetSubstationLayer) {
-      setGensetStatus('Pick a GeoServer layer with substation locations first')
+    if (!fixedLayers) {
+      setGensetStatus('GeoServer layer configuration not loaded yet — try again in a moment')
       return
     }
-    setGensetStatus('Looking up site…')
+    setGensetStatus('Resolving location…')
     try {
-      const detail = await api.siteDetail(gensetSiteId.trim().toUpperCase())
-      if (!detail.site) {
-        setGensetStatus(`Site ${gensetSiteId} not found`)
-        return
+      let latitude: number, longitude: number
+      if (gensetPickedLatLng) {
+        ;[latitude, longitude] = gensetPickedLatLng
+      } else {
+        const detail = await api.siteDetail(gensetSiteId.trim().toUpperCase())
+        if (!detail.site) {
+          setGensetStatus(`Site ${gensetSiteId} not found`)
+          return
+        }
+        latitude = detail.site.latitude
+        longitude = detail.site.longitude
       }
-      const { latitude, longitude } = detail.site
       setGensetStatus('Querying nearby substations…')
-      const features = await api.nearbyGeoserverFeatures(gensetSubstationLayer, latitude, longitude, 2500)
+      const features = await api.nearbyGeoserverFeatures(fixedLayers.substations_layer, latitude, longitude, 2500)
       const substations = features.map((f, i) => ({ osm_id: String(f.properties.osm_id ?? i), name: f.name, lat: f.lat, lng: f.lng }))
 
       if (substations.length === 0) {
-        setGensetStatus(`No substations found within 2.5km on layer "${gensetSubstationLayer}"`)
+        setGensetStatus(`No substations found within 2.5km on layer "${fixedLayers.substations_layer}"`)
         return
       }
       setGensetStatus('Routing to nearest substations…')
@@ -1043,6 +1153,99 @@ export function MapPage() {
       setGensetStatus(e instanceof Error ? e.message : 'Genset lookup failed')
     }
   }
+
+  // Genset routing, bulk mode: upload a spreadsheet of site IDs
+  // (legacy's bulk flow), parse the site_id column server-side, then
+  // run the same single-site flow for every row and aggregate results
+  // — matches the legacy bulk tool's per-site loop.
+  async function runGensetBulk() {
+    if (!gensetBulkFile) {
+      setGensetStatus('Choose an .xlsx or .csv file with a site_id column first')
+      return
+    }
+    if (!fixedLayers) {
+      setGensetStatus('GeoServer layer configuration not loaded yet — try again in a moment')
+      return
+    }
+    setGensetBulkResults([])
+    setGensetStatus('Reading site IDs from file…')
+    try {
+      const siteIds = await api.gensetBulkSiteIds(gensetBulkFile)
+      if (siteIds.length === 0) {
+        setGensetStatus('No site IDs found in that file')
+        return
+      }
+      const results: { siteId: string; result: GensetRouteResult | null; error: string | null }[] = []
+      for (let i = 0; i < siteIds.length; i++) {
+        const siteId = siteIds[i]
+        setGensetStatus(`Processing ${i + 1}/${siteIds.length}: ${siteId}…`)
+        try {
+          const detail = await api.siteDetail(siteId.toUpperCase())
+          if (!detail.site) {
+            results.push({ siteId, result: null, error: 'Site not found' })
+            continue
+          }
+          const { latitude, longitude } = detail.site
+          const features = await api.nearbyGeoserverFeatures(fixedLayers.substations_layer, latitude, longitude, 2500)
+          const substations = features.map((f, j) => ({ osm_id: String(f.properties.osm_id ?? j), name: f.name, lat: f.lat, lng: f.lng }))
+          if (substations.length === 0) {
+            results.push({ siteId, result: null, error: 'No substations within 2.5km' })
+            continue
+          }
+          const result = await api.gensetRoute({ site_lat: latitude, site_lng: longitude, substations })
+          results.push({ siteId, result, error: result.error })
+        } catch (e) {
+          results.push({ siteId, result: null, error: e instanceof Error ? e.message : 'Failed' })
+        }
+      }
+      setGensetBulkResults(results)
+      const okCount = results.filter((r) => r.result && r.result.results.length > 0).length
+      setGensetStatus(`${okCount}/${siteIds.length} site(s) routed to a substation`)
+    } catch (e) {
+      setGensetStatus(e instanceof Error ? e.message : 'Bulk genset processing failed')
+    }
+  }
+
+  // Map click handler for Genset's "pick a point" single-site mode
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !gensetPickMode) return
+    function handleClick(e: maplibregl.MapMouseEvent) {
+      setGensetPickedLatLng([e.lngLat.lat, e.lngLat.lng])
+      setGensetPickMode(false)
+    }
+    map.on('click', handleClick)
+    return () => {
+      map.off('click', handleClick)
+    }
+  }, [gensetPickMode])
+
+  // Marker for the picked point in Genset's single-site mode
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    const data: FeatureCollection = {
+      type: 'FeatureCollection',
+      features: gensetPickedLatLng ? [{ type: 'Feature', geometry: { type: 'Point', coordinates: [gensetPickedLatLng[1], gensetPickedLatLng[0]] }, properties: {} }] : [],
+    }
+    const apply = () => {
+      const existing = map.getSource('genset-picked-point') as maplibregl.GeoJSONSource | undefined
+      if (existing) {
+        existing.setData(data)
+        return
+      }
+      if (!map.isStyleLoaded()) return
+      map.addSource('genset-picked-point', { type: 'geojson', data })
+      map.addLayer({
+        id: 'genset-picked-point-circle',
+        type: 'circle',
+        source: 'genset-picked-point',
+        paint: { 'circle-radius': 7, 'circle-color': '#f97316', 'circle-stroke-width': 2, 'circle-stroke-color': '#ffffff' },
+      })
+    }
+    if (map.isStyleLoaded()) apply()
+    else map.once('load', apply)
+  }, [gensetPickedLatLng])
 
   // CCTV planning: requires the same file uploads the legacy tool did
   // (building/parking/poles GeoJSON, no single-site flow available
@@ -1088,8 +1291,8 @@ export function MapPage() {
       setBitcoinStatus('Select 2 or 3 site IDs (comma-separated)')
       return
     }
-    if (!bitcoinBuildingLayer || !bitcoinSubstationLayer) {
-      setBitcoinStatus('Pick a buildings layer and a substations layer first')
+    if (!fixedLayers) {
+      setBitcoinStatus('GeoServer layer configuration not loaded yet — try again in a moment')
       return
     }
     setBitcoinResult(null)
@@ -1107,8 +1310,8 @@ export function MapPage() {
 
       setBitcoinStatus('Querying nearby buildings and substations…')
       const [buildings, substations] = await Promise.all([
-        api.nearbyGeoserverFeatures(bitcoinBuildingLayer, centerLat, centerLng, radiusM),
-        api.nearbyGeoserverFeatures(bitcoinSubstationLayer, centerLat, centerLng, radiusM * 3),
+        api.nearbyGeoserverFeatures(fixedLayers.buildings_layer, centerLat, centerLng, radiusM),
+        api.nearbyGeoserverFeatures(fixedLayers.substations_layer, centerLat, centerLng, radiusM * 3),
       ])
 
       let nearestSubstation: string | null = null
@@ -1123,7 +1326,7 @@ export function MapPage() {
       setBitcoinResult({ buildingCount: buildings.length, nearestSubstation, nearestDistM })
       setBitcoinStatus(
         buildings.length === 0 && substations.length === 0
-          ? `No data on layers "${bitcoinBuildingLayer}"/"${bitcoinSubstationLayer}" yet — publish them in GeoServer to use this tool`
+          ? `No data on layers "${fixedLayers.buildings_layer}"/"${fixedLayers.substations_layer}" yet — publish them in GeoServer to use this tool`
           : `${buildings.length} candidate building(s) found within ${fmtDistance(radiusM)} of the triangulated center`,
       )
 
@@ -1150,13 +1353,18 @@ export function MapPage() {
     }
   }
 
-  // Render genset route lines once a result comes back
+  // Render genset route lines — single result, or all routes from a
+  // bulk run combined.
   useEffect(() => {
     const map = mapRef.current
-    if (!map || !gensetResult) return
+    if (!map) return
+    const allResults = gensetResult ? [gensetResult] : gensetBulkResults.map((r) => r.result).filter((r): r is GensetRouteResult => r !== null)
+    if (allResults.length === 0) return
     const data: FeatureCollection = {
       type: 'FeatureCollection',
-      features: gensetResult.results.map((r) => ({ type: 'Feature', geometry: { type: 'LineString', coordinates: r.route_coords }, properties: { name: r.name } })),
+      features: allResults.flatMap((res) =>
+        res.results.map((r) => ({ type: 'Feature' as const, geometry: { type: 'LineString' as const, coordinates: r.route_coords }, properties: { name: r.name } })),
+      ),
     }
     const apply = () => {
       const existing = map.getSource('genset-routes') as maplibregl.GeoJSONSource | undefined
@@ -1170,7 +1378,7 @@ export function MapPage() {
     }
     if (map.isStyleLoaded()) apply()
     else map.once('load', apply)
-  }, [gensetResult])
+  }, [gensetResult, gensetBulkResults])
 
   return (
     <div className="space-y-4">
@@ -1228,7 +1436,7 @@ export function MapPage() {
               <button
                 onClick={() => {
                   setDrawMenuOpen((v) => !v)
-                  setToolsMenuOpen(false)
+                  setGensetMenuOpen(false)
                 }}
                 title="Draw an annotation"
                 className={`flex h-9 w-9 items-center justify-center rounded-xl ${
@@ -1315,39 +1523,70 @@ export function MapPage() {
             )}
 
             <div className="relative z-30">
-              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">Tools</p>
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">Genset</p>
               <button
                 onClick={() => {
-                  setToolsMenuOpen((v) => !v)
+                  setGensetMenuOpen((v) => !v)
                   setDrawMenuOpen(false)
                 }}
-                title="Site planning tools"
+                title="Genset/substation routing"
                 className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 text-white/80"
               >
                 <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                  <path d="M13 2 3 14h7l-1 8 11-12h-7l1-8z" />
                 </svg>
               </button>
-              {toolsMenuOpen && (
-                <div className="absolute left-0 top-full z-30 mt-2 w-44 rounded-2xl border border-white/15 bg-ink-900/95 p-2 text-xs backdrop-blur-xl">
-                  {([
-                    ['genset', 'Genset routing'],
-                    ['cctv', 'CCTV planning'],
-                    ['bitcoin', 'Bitcoin-mining check'],
-                  ] as const).map(([key, label]) => (
-                    <button
-                      key={key}
-                      onClick={() => {
-                        setActiveToolPanel(key)
-                        setToolsMenuOpen(false)
-                      }}
-                      className="block w-full rounded-lg px-2.5 py-1.5 text-left text-white/80 hover:bg-white/10"
-                    >
-                      {label}
-                    </button>
-                  ))}
+              {gensetMenuOpen && (
+                <div className="absolute left-0 top-full z-30 mt-2 w-36 rounded-2xl border border-white/15 bg-ink-900/95 p-2 text-xs backdrop-blur-xl">
+                  <button
+                    onClick={() => {
+                      setGensetMode('single')
+                      setActiveToolPanel('genset')
+                      setGensetMenuOpen(false)
+                    }}
+                    className="block w-full rounded-lg px-2.5 py-1.5 text-left text-white/80 hover:bg-white/10"
+                  >
+                    Single site
+                  </button>
+                  <button
+                    onClick={() => {
+                      setGensetMode('bulk')
+                      setActiveToolPanel('genset')
+                      setGensetMenuOpen(false)
+                    }}
+                    className="block w-full rounded-lg px-2.5 py-1.5 text-left text-white/80 hover:bg-white/10"
+                  >
+                    Bulk (xlsx/csv)
+                  </button>
                 </div>
               )}
+            </div>
+
+            <div>
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">CCTV</p>
+              <button
+                onClick={() => setActiveToolPanel('cctv')}
+                title="CCTV camera planning"
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 text-white/80"
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 2v-7l-4 2z" />
+                </svg>
+              </button>
+            </div>
+
+            <div>
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">Power check</p>
+              <button
+                onClick={() => setActiveToolPanel('bitcoin')}
+                title="Unauthorized power-draw check"
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 text-white/80"
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M9.5 9h2l-1 3h2l-2.5 4M14.5 9h-1" />
+                </svg>
+              </button>
             </div>
             {(tool === 'line' || tool === 'polygon') && (
               <button
@@ -1368,7 +1607,7 @@ export function MapPage() {
           <div className="relative h-[55vh] w-full">
             <div ref={containerRef} className="h-full w-full overflow-hidden rounded-3xl border border-white/15" />
 
-            <div className="absolute right-3 top-3 z-10">
+            <div className="absolute left-3 top-3 z-10">
               <button
                 onClick={() => setLayersOpen((v) => !v)}
                 title="Map layers"
@@ -1398,8 +1637,7 @@ export function MapPage() {
                   <div className="mb-3 space-y-1">
                     {(
                       [
-                        ['sites', 'Site'],
-                        ['congestedSites', 'Congested site'],
+                        ['sites', 'Sites'],
                         ['heatmap', 'Heatmap (congested)'],
                         ['coverage5g', '5G coverage'],
                         ['coverage4g', '4G coverage'],
@@ -1474,28 +1712,70 @@ export function MapPage() {
               <p className="font-semibold">{fmtCurrency(overview?.total_capex)}</p>
             </div>
             <div className="border-t border-white/10 pt-2.5">
-              <p className="text-white/55">Worst congested sector</p>
-              <p className="font-semibold">
-                {overview?.worst_congested_sector
-                  ? `${overview.worst_congested_sector.zoom_sector_id} (${overview.worst_congested_sector.region}) · ${overview.worst_congested_sector.congested_weeks} wks`
-                  : '—'}
-              </p>
+              <p className="mb-1 text-white/55">Worst congested sectors</p>
+              {overview && overview.worst_congested_sectors.length > 0 ? (
+                <ul className="max-h-40 space-y-1 overflow-y-auto">
+                  {overview.worst_congested_sectors.map((s, i) => (
+                    <li key={s.zoom_sector_id}>
+                      <button
+                        onClick={() => panTo(s.latitude, s.longitude)}
+                        disabled={s.latitude == null}
+                        className="w-full rounded-lg px-1.5 py-1 text-left text-xs hover:bg-white/10 disabled:cursor-default disabled:hover:bg-transparent"
+                      >
+                        <span className="text-white/40">{i + 1}.</span>{' '}
+                        <span className="font-semibold">{s.zoom_sector_id}</span>
+                        <span className="text-white/55"> ({s.region}) · {s.congested_weeks} wks</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-white/40">—</p>
+              )}
             </div>
             <div>
-              <p className="text-white/55">Worst Ookla cluster</p>
-              <p className="font-semibold">
-                {overview?.worst_ookla_cluster
-                  ? `#${overview.worst_ookla_cluster.cluster_id} · ${overview.worst_ookla_cluster.point_count} pts · ${fmt(overview.worst_ookla_cluster.avg_signal)} dBm`
-                  : '—'}
-              </p>
+              <p className="mb-1 text-white/55">Worst Ookla clusters</p>
+              {overview && overview.worst_ookla_clusters.length > 0 ? (
+                <ul className="max-h-40 space-y-1 overflow-y-auto">
+                  {overview.worst_ookla_clusters.map((c, i) => (
+                    <li key={c.cluster_id}>
+                      <button
+                        onClick={() => panTo(c.latitude, c.longitude)}
+                        disabled={c.latitude == null}
+                        className="w-full rounded-lg px-1.5 py-1 text-left text-xs hover:bg-white/10 disabled:cursor-default disabled:hover:bg-transparent"
+                      >
+                        <span className="text-white/40">{i + 1}.</span>{' '}
+                        <span className="font-semibold">#{c.cluster_id}</span>
+                        <span className="text-white/55"> · {c.point_count} pts · {fmt(c.avg_signal)} dBm</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-white/40">—</p>
+              )}
             </div>
             <div>
-              <p className="text-white/55">Worst MR cluster</p>
-              <p className="font-semibold">
-                {overview?.worst_mr_cluster
-                  ? `#${overview.worst_mr_cluster.cluster_id} · ${overview.worst_mr_cluster.point_count} pts · ${fmt(overview.worst_mr_cluster.avg_signal)} dBm`
-                  : '—'}
-              </p>
+              <p className="mb-1 text-white/55">Worst MR clusters</p>
+              {overview && overview.worst_mr_clusters.length > 0 ? (
+                <ul className="max-h-40 space-y-1 overflow-y-auto">
+                  {overview.worst_mr_clusters.map((c, i) => (
+                    <li key={c.cluster_id}>
+                      <button
+                        onClick={() => panTo(c.latitude, c.longitude)}
+                        disabled={c.latitude == null}
+                        className="w-full rounded-lg px-1.5 py-1 text-left text-xs hover:bg-white/10 disabled:cursor-default disabled:hover:bg-transparent"
+                      >
+                        <span className="text-white/40">{i + 1}.</span>{' '}
+                        <span className="font-semibold">#{c.cluster_id}</span>
+                        <span className="text-white/55"> · {c.point_count} pts · {fmt(c.avg_signal)} dBm</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-white/40">—</p>
+              )}
             </div>
           </div>
         </GlassPanel>
@@ -1620,57 +1900,128 @@ export function MapPage() {
       {activeToolPanel === 'genset' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/60 backdrop-blur-sm">
           <GlassPanel className="w-full max-w-sm">
-            <p className="mb-3.5 font-display text-sm font-semibold">Genset/substation routing</p>
-            <div className="mb-3">
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">Site ID</label>
-              <input
-                value={gensetSiteId}
-                onChange={(e) => setGensetSiteId(e.target.value)}
-                placeholder="e.g. N00377"
-                className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
-              />
-            </div>
-            <div className="mb-3">
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
-                Substations GeoServer layer
-              </label>
-              <select
-                value={gensetSubstationLayer}
-                onChange={(e) => setGensetSubstationLayer(e.target.value)}
-                className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
-              >
-                <option value="">Select a layer…</option>
-                {geoserverLayerList.map((l) => (
-                  <option key={l.name} value={l.name}>{l.title}</option>
-                ))}
-              </select>
-              {geoserverLayerList.length === 0 && (
-                <p className="mt-1 text-[11px] text-white/40">No GeoServer layers published yet.</p>
-              )}
-            </div>
-            {gensetStatus && <p className="mb-3 text-xs text-white/70">{gensetStatus}</p>}
-            {gensetResult && gensetResult.results.length > 0 && (
-              <ul className="mb-3 max-h-40 space-y-1 overflow-y-auto text-xs">
-                {gensetResult.results.map((r) => (
-                  <li key={r.osm_id} className="rounded-lg bg-white/5 px-2.5 py-1.5">
-                    <span className="font-semibold">{r.name}</span>
-                    <span className="text-white/55"> — {r.road_dist_km} km by road</span>
-                  </li>
-                ))}
-              </ul>
+            <p className="mb-1 font-display text-sm font-semibold">Genset/substation routing</p>
+            <p className="mb-3.5 text-[11px] text-white/40">
+              {gensetMode === 'single' ? 'Single site' : 'Bulk (xlsx/csv)'} · substations from{' '}
+              {fixedLayers ? `"${fixedLayers.substations_layer}"` : 'GeoServer'}
+            </p>
+
+            {gensetMode === 'single' && (
+              <>
+                <div className="mb-3 flex gap-1.5">
+                  <button
+                    onClick={() => {
+                      setGensetPickMode((v) => !v)
+                      setGensetPickedLatLng(null)
+                    }}
+                    className={`flex-1 rounded-xl px-3 py-2 text-xs font-semibold ${
+                      gensetPickMode ? 'bg-sky-400 text-ink-900' : 'border border-white/20 text-white/70'
+                    }`}
+                  >
+                    {gensetPickMode ? 'Click a point on the map…' : 'Click site on map'}
+                  </button>
+                  {gensetPickedLatLng && (
+                    <button
+                      onClick={() => setGensetPickedLatLng(null)}
+                      className="rounded-xl border border-white/20 px-3 py-2 text-xs font-semibold text-white/70"
+                    >
+                      Clear pin
+                    </button>
+                  )}
+                </div>
+                {gensetPickedLatLng ? (
+                  <p className="mb-3 rounded-xl bg-white/5 px-3 py-2 text-xs text-white/70">
+                    Pinned: {gensetPickedLatLng[0].toFixed(5)}, {gensetPickedLatLng[1].toFixed(5)}
+                  </p>
+                ) : (
+                  <div className="mb-3">
+                    <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
+                      Or search by site ID
+                    </label>
+                    <input
+                      value={gensetSiteId}
+                      onChange={(e) => setGensetSiteId(e.target.value)}
+                      placeholder="e.g. N00377"
+                      className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
+                    />
+                  </div>
+                )}
+                {gensetStatus && <p className="mb-3 text-xs text-white/70">{gensetStatus}</p>}
+                {gensetResult && gensetResult.results.length > 0 && (
+                  <ul className="mb-3 max-h-40 space-y-1 overflow-y-auto text-xs">
+                    {gensetResult.results.map((r) => (
+                      <li key={r.osm_id} className="rounded-lg bg-white/5 px-2.5 py-1.5">
+                        <span className="font-semibold">{r.name}</span>
+                        <span className="text-white/55"> — {r.road_dist_km} km by road</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
             )}
+
+            {gensetMode === 'bulk' && (
+              <>
+                <div className="mb-3">
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
+                    Spreadsheet with a site_id column
+                  </label>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    onChange={(e) => setGensetBulkFile(e.target.files?.[0] ?? null)}
+                    className="w-full text-xs text-white/70"
+                  />
+                  {gensetBulkFile && <p className="mt-0.5 text-[11px] text-emerald-300">{gensetBulkFile.name}</p>}
+                </div>
+                {gensetStatus && <p className="mb-3 text-xs text-white/70">{gensetStatus}</p>}
+                {gensetBulkResults.length > 0 && (
+                  <div className="mb-3 max-h-48 overflow-y-auto rounded-xl bg-white/5">
+                    <table className="w-full text-left text-xs">
+                      <thead className="sticky top-0 bg-ink-900/95 text-white/45">
+                        <tr>
+                          <th className="px-2.5 py-1.5">Site ID</th>
+                          <th className="px-2.5 py-1.5">Nearest substation</th>
+                          <th className="px-2.5 py-1.5">Distance</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {gensetBulkResults.map((r) => {
+                          const best = r.result?.results[0]
+                          return (
+                            <tr key={r.siteId} className="border-t border-white/5">
+                              <td className="px-2.5 py-1.5 font-semibold">{r.siteId}</td>
+                              <td className="px-2.5 py-1.5 text-white/70">{best ? best.name : r.error ?? '—'}</td>
+                              <td className="px-2.5 py-1.5 text-white/70">{best ? `${best.road_dist_km} km` : '—'}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            )}
+
             <div className="flex justify-end gap-2">
               <button
-                onClick={() => { setActiveToolPanel('none'); setGensetResult(null); setGensetStatus(null) }}
+                onClick={() => {
+                  setActiveToolPanel('none')
+                  setGensetResult(null)
+                  setGensetStatus(null)
+                  setGensetPickMode(false)
+                  setGensetPickedLatLng(null)
+                  setGensetBulkResults([])
+                }}
                 className="rounded-xl border border-white/20 px-4 py-2 text-sm font-semibold text-white/70"
               >
                 Close
               </button>
               <button
-                onClick={runGenset}
+                onClick={gensetMode === 'single' ? runGenset : runGensetBulk}
                 className="rounded-xl bg-gradient-to-r from-accent-400 to-accent-500 px-4 py-2 text-sm font-semibold text-ink-900"
               >
-                Find route
+                {gensetMode === 'single' ? 'Find route' : 'Process file'}
               </button>
             </div>
           </GlassPanel>
@@ -1682,19 +2033,30 @@ export function MapPage() {
           <GlassPanel className="w-full max-w-sm">
             <p className="mb-3.5 font-display text-sm font-semibold">CCTV camera planning</p>
             {([
-              ['Building footprints (GeoJSON)', cctvBuildingFile, setCctvBuildingFile],
-              ['Parking areas (GeoJSON)', cctvParkingFile, setCctvParkingFile],
-              ['Existing poles (GeoJSON)', cctvPolesFile, setCctvPolesFile],
-            ] as const).map(([label, file, setFile]) => (
+              ['Building footprints (GeoJSON)', cctvBuildingFile, setCctvBuildingFile, 'cctv-building-input'],
+              ['Parking areas (GeoJSON)', cctvParkingFile, setCctvParkingFile, 'cctv-parking-input'],
+              ['Existing poles (GeoJSON)', cctvPolesFile, setCctvPolesFile, 'cctv-poles-input'],
+            ] as const).map(([label, file, setFile, inputId]) => (
               <div key={label} className="mb-2.5">
                 <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">{label}</label>
                 <input
+                  id={inputId}
                   type="file"
                   accept=".geojson,.json"
                   onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                  className="w-full text-xs text-white/70"
+                  className="hidden"
                 />
-                {file && <p className="mt-0.5 text-[11px] text-emerald-300">{file.name}</p>}
+                <label
+                  htmlFor={inputId}
+                  className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold ${
+                    file ? 'border-emerald-400/40 bg-emerald-400/10 text-emerald-300' : 'border-white/20 bg-white/5 text-white/80 hover:bg-white/10'
+                  }`}
+                >
+                  <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 16V4M7 9l5-5 5 5M5 20h14" />
+                  </svg>
+                  {file ? file.name : 'Choose file…'}
+                </label>
               </div>
             ))}
             <div className="mb-3">
@@ -1727,9 +2089,12 @@ export function MapPage() {
               </button>
               <button
                 onClick={runCctv}
-                className="rounded-xl bg-gradient-to-r from-accent-400 to-accent-500 px-4 py-2 text-sm font-semibold text-ink-900"
+                className="flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-400"
               >
-                Run
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+                Run CCTV Pipeline
               </button>
             </div>
           </GlassPanel>
@@ -1739,7 +2104,10 @@ export function MapPage() {
       {activeToolPanel === 'bitcoin' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/60 backdrop-blur-sm">
           <GlassPanel className="w-full max-w-sm">
-            <p className="mb-3.5 font-display text-sm font-semibold">Unauthorized power-draw check</p>
+            <p className="mb-1 font-display text-sm font-semibold">Unauthorized power-draw check</p>
+            <p className="mb-3.5 text-[11px] text-white/40">
+              {fixedLayers ? `Buildings: "${fixedLayers.buildings_layer}" · Substations: "${fixedLayers.substations_layer}"` : 'Loading GeoServer layer configuration…'}
+            </p>
             <div className="mb-3">
               <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
                 Site IDs (2-3, comma-separated)
@@ -1750,36 +2118,6 @@ export function MapPage() {
                 placeholder="e.g. N00377, N00412"
                 className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
               />
-            </div>
-            <div className="mb-3">
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
-                Buildings GeoServer layer
-              </label>
-              <select
-                value={bitcoinBuildingLayer}
-                onChange={(e) => setBitcoinBuildingLayer(e.target.value)}
-                className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
-              >
-                <option value="">Select a layer…</option>
-                {geoserverLayerList.map((l) => (
-                  <option key={l.name} value={l.name}>{l.title}</option>
-                ))}
-              </select>
-            </div>
-            <div className="mb-3">
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
-                Substations GeoServer layer
-              </label>
-              <select
-                value={bitcoinSubstationLayer}
-                onChange={(e) => setBitcoinSubstationLayer(e.target.value)}
-                className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
-              >
-                <option value="">Select a layer…</option>
-                {geoserverLayerList.map((l) => (
-                  <option key={l.name} value={l.name}>{l.title}</option>
-                ))}
-              </select>
             </div>
             {bitcoinStatus && <p className="mb-3 text-xs text-white/70">{bitcoinStatus}</p>}
             {bitcoinResult && (

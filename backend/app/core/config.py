@@ -13,6 +13,14 @@ class Settings(BaseSettings):
     parquet_dir: str = "./data/parquet"
     raw_data_dir: str = "./data/raw"
     geoserver_url: str = "http://localhost:8600/geoserver"
+    # Fixed layer names the Genset/Bitcoin-mining map tools query for
+    # substation/building candidates — placeholders until an admin
+    # actually publishes layers with these names in GeoServer. Not
+    # user-selectable in the UI by design: these tools should always
+    # point at the org's one canonical substations/buildings dataset,
+    # not an arbitrary layer someone happens to pick.
+    geoserver_substations_layer: str = "infra:substations"
+    geoserver_buildings_layer: str = "infra:buildings"
 
     # Vite picks a free port if its default is taken, so this covers the
     # common local-dev range rather than hardcoding one port.

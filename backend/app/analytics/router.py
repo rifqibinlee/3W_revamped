@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.analytics import service
+from app.core.config import settings
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -36,6 +37,14 @@ def overview_stats() -> dict:
 @router.get("/geoserver-layers")
 def geoserver_layers() -> list[dict]:
     return service.geoserver_layers()
+
+
+@router.get("/geoserver-fixed-layers")
+def geoserver_fixed_layers() -> dict:
+    """The fixed substations/buildings layer names the Genset and
+    Bitcoin-mining tools always query — not user-selectable, see
+    Settings.geoserver_substations_layer/geoserver_buildings_layer."""
+    return {"substations_layer": settings.geoserver_substations_layer, "buildings_layer": settings.geoserver_buildings_layer}
 
 
 @router.get("/nearby-geoserver-features")

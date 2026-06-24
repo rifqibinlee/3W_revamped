@@ -38,3 +38,31 @@ def test_genset_route_endpoint_handles_no_substations(client) -> None:
     )
     assert resp.status_code == 200
     assert resp.json()["error"] == "No substations provided"
+
+
+def test_genset_bulk_site_ids_parses_csv_with_site_id_header(client) -> None:
+    csv_content = b"Site_ID,notes\nN00377,foo\nN00412,bar\n"
+    resp = client.post(
+        "/siteplanning/genset/bulk-site-ids",
+        files={"file": ("sites.csv", csv_content, "text/csv")},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == ["N00377", "N00412"]
+
+
+def test_genset_bulk_site_ids_falls_back_to_first_column(client) -> None:
+    csv_content = b"id,notes\nN00377,foo\n"
+    resp = client.post(
+        "/siteplanning/genset/bulk-site-ids",
+        files={"file": ("sites.csv", csv_content, "text/csv")},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == ["N00377"]
+
+
+def test_genset_bulk_site_ids_rejects_unreadable_file(client) -> None:
+    resp = client.post(
+        "/siteplanning/genset/bulk-site-ids",
+        files={"file": ("sites.xlsx", b"not a real xlsx", "application/octet-stream")},
+    )
+    assert resp.status_code == 400

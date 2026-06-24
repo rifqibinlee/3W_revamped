@@ -82,7 +82,7 @@ def test_overview_stats_endpoint_with_no_data(client) -> None:
     assert resp.status_code == 200
     assert resp.json() == {
         "total_sites": 0, "total_congested_sites": 0, "total_capex": 0.0,
-        "worst_congested_sector": None, "worst_ookla_cluster": None, "worst_mr_cluster": None,
+        "worst_congested_sectors": [], "worst_ookla_clusters": [], "worst_mr_clusters": [],
     }
 
 
@@ -128,3 +128,11 @@ def test_nearby_geoserver_features_endpoint_returns_empty_when_unreachable(clien
     resp = client.get("/analytics/nearby-geoserver-features", params={"layer": "substations", "lat": 3.1, "lng": 101.6})
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+def test_geoserver_fixed_layers_endpoint_returns_configured_names(client) -> None:
+    resp = client.get("/analytics/geoserver-fixed-layers")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "substations_layer" in body
+    assert "buildings_layer" in body

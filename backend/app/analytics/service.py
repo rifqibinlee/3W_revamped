@@ -717,21 +717,24 @@ def _feature_centroid(geom_type: str | None, coords) -> tuple[float, float] | No
 
 def overview_stats() -> dict:
     """Network-wide stats, not scoped to the viewport — the panel above
-    the bounds-scoped tab."""
+    the bounds-scoped tab. Worst-congested-sectors/Ookla/MR clusters
+    are each a top-10 list (not just the single worst) so the panel
+    can show a ranked, click-to-pan list."""
     congestion_path = _parquet_path("congestion_analysis")
+    sites_path = _parquet_path("site_coordinates")
     holes_path = _parquet_path("coverage_holes")
     capex_files = _capex_files()
 
     if not congestion_path.exists() and not holes_path.exists() and not capex_files:
         return {
             "total_sites": 0, "total_congested_sites": 0, "total_capex": 0.0,
-            "worst_congested_sector": None, "worst_ookla_cluster": None, "worst_mr_cluster": None,
+            "worst_congested_sectors": [], "worst_ookla_clusters": [], "worst_mr_clusters": [],
         }
 
     con = get_connection()
     try:
         total_sites = total_congested = 0
-        worst_congested_sector = None
+        worst_congested_sectors: list[dict] = []
         if congestion_path.exists():
             row = con.execute(f"""
                 WITH latest AS (
@@ -748,49 +751,59 @@ def overview_stats() -> dict:
             # weeks spent over the congestion threshold — not just currently
             # congested, since a sector congested for 1 week is a different
             # problem than one congested for 10.
-            worst_row = con.execute(f"""
-                SELECT zoom_sector_id, region, max(congested_weeks) AS weeks
-                FROM read_parquet('{congestion_path}')
-                WHERE congested_weeks IS NOT NULL
-                GROUP BY zoom_sector_id, region
+            join_clause = (
+                f"LEFT JOIN read_parquet('{sites_path}') s ON split_part(c.zoom_sector_id, '_', 1) = s.site_id"
+                if sites_path.exists() else ""
+            )
+            site_cols = "s.latitude, s.longitude" if sites_path.exists() else "NULL, NULL"
+            worst_rows = con.execute(f"""
+                SELECT c.zoom_sector_id, c.region, max(c.congested_weeks) AS weeks, {site_cols}
+                FROM read_parquet('{congestion_path}') c
+                {join_clause}
+                WHERE c.congested_weeks IS NOT NULL
+                GROUP BY c.zoom_sector_id, c.region, {site_cols}
                 ORDER BY weeks DESC
-                LIMIT 1
-            """).fetchone()
-            if worst_row and worst_row[2]:
-                worst_congested_sector = {
-                    "zoom_sector_id": worst_row[0], "region": worst_row[1], "congested_weeks": worst_row[2],
-                }
+                LIMIT 10
+            """).fetchall()
+            worst_congested_sectors = [
+                {"zoom_sector_id": r[0], "region": r[1], "congested_weeks": r[2], "latitude": r[3], "longitude": r[4]}
+                for r in worst_rows
+                if r[2]
+            ]
 
         total_capex = 0.0
         if capex_files:
             row = con.execute(f"SELECT sum(estimated_total_capex_rm) FROM read_parquet('{_capex_glob()}')").fetchone()
             total_capex = round(row[0], 2) if row and row[0] is not None else 0.0
 
-        def worst_cluster(source: str) -> dict | None:
+        def worst_clusters(source: str) -> list[dict]:
             if not holes_path.exists():
-                return None
-            top = con.execute(
+                return []
+            rows = con.execute(
                 f"""
-                SELECT cluster_id, count(*) AS point_count, avg(signal_strength) AS avg_signal
+                SELECT cluster_id, count(*) AS point_count, avg(signal_strength) AS avg_signal,
+                       avg(latitude) AS lat, avg(longitude) AS lng
                 FROM read_parquet('{holes_path}')
                 WHERE data_source = ? AND cluster_id != -1
                 GROUP BY cluster_id
                 ORDER BY point_count DESC
-                LIMIT 1
+                LIMIT 10
                 """,
                 [source],
-            ).fetchone()
-            if not top:
-                return None
-            return {
-                "cluster_id": top[0], "data_source": source,
-                "point_count": top[1], "avg_signal": round(top[2], 1) if top[2] is not None else None,
-            }
+            ).fetchall()
+            return [
+                {
+                    "cluster_id": r[0], "data_source": source, "point_count": r[1],
+                    "avg_signal": round(r[2], 1) if r[2] is not None else None,
+                    "latitude": r[3], "longitude": r[4],
+                }
+                for r in rows
+            ]
 
         return {
             "total_sites": total_sites, "total_congested_sites": total_congested, "total_capex": total_capex,
-            "worst_congested_sector": worst_congested_sector,
-            "worst_ookla_cluster": worst_cluster("Ookla"), "worst_mr_cluster": worst_cluster("MR"),
+            "worst_congested_sectors": worst_congested_sectors,
+            "worst_ookla_clusters": worst_clusters("Ookla"), "worst_mr_clusters": worst_clusters("MR"),
         }
     finally:
         con.close()

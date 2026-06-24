@@ -200,6 +200,8 @@ export interface CoverageHoleSummary {
   data_source: string
   point_count: number
   avg_signal: number | null
+  latitude: number | null
+  longitude: number | null
 }
 
 export interface MapStats {
@@ -266,15 +268,17 @@ export interface WorstCongestedSector {
   zoom_sector_id: string
   region: string
   congested_weeks: number
+  latitude: number | null
+  longitude: number | null
 }
 
 export interface OverviewStats {
   total_sites: number
   total_congested_sites: number
   total_capex: number
-  worst_congested_sector: WorstCongestedSector | null
-  worst_ookla_cluster: CoverageHoleSummary | null
-  worst_mr_cluster: CoverageHoleSummary | null
+  worst_congested_sectors: WorstCongestedSector[]
+  worst_ookla_clusters: CoverageHoleSummary[]
+  worst_mr_clusters: CoverageHoleSummary[]
 }
 
 export interface PaginatedResult<T> {
@@ -402,6 +406,10 @@ export const api = {
   },
 
   geoserverLayers: () => request<GeoserverLayer[]>('/analytics/geoserver-layers'),
+
+  geoserverFixedLayers: () => request<{ substations_layer: string; buildings_layer: string }>('/analytics/geoserver-fixed-layers'),
+
+  gensetBulkSiteIds: (file: File) => uploadFile<string[]>('/siteplanning/genset/bulk-site-ids', file),
 
   nearbyGeoserverFeatures: (layer: string, lat: number, lng: number, radiusM = 2500) =>
     request<NearbyFeature[]>(

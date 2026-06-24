@@ -1,9 +1,12 @@
 import csv
+import io
 import json
+import re
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter
+import pandas as pd
+from fastapi import APIRouter, HTTPException, UploadFile, status
 
 from app.siteplanning.cctv import run_cctv_pipeline
 from app.siteplanning.genset import route_substations
@@ -43,6 +46,29 @@ def genset_route(payload: GensetRouteRequest) -> dict:
         payload.max_road_dist_m,
         payload.graph_buffer_m,
     )
+
+
+@router.post("/genset/bulk-site-ids")
+async def genset_bulk_site_ids(file: UploadFile) -> list[str]:
+    """Parses just the site_id column out of an uploaded bulk-routing
+    spreadsheet — the same "site_id" header match the legacy app's
+    bulk Genset tool used (first sheet, header matched case/
+    punctuation-insensitively, falling back to the first column if no
+    header matches). The frontend then calls /genset/route once per
+    site_id, same as the legacy app's per-site backend route."""
+    content = await file.read()
+    try:
+        df = pd.read_excel(io.BytesIO(content), sheet_name=0) if (file.filename or "").endswith((".xlsx", ".xls")) else pd.read_csv(io.BytesIO(content))
+    except Exception as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Could not read spreadsheet: {exc}") from exc
+
+    def normalize(col: str) -> str:
+        return re.sub(r"[\s_-]", "", col.lower())
+
+    site_id_col = next((c for c in df.columns if normalize(str(c)) == "siteid"), df.columns[0] if len(df.columns) else None)
+    if site_id_col is None:
+        return []
+    return [str(v).strip() for v in df[site_id_col].dropna().tolist() if str(v).strip()]
 
 
 def _write_temp_json(data: dict) -> str:

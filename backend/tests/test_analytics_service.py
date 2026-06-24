@@ -380,7 +380,7 @@ def test_overview_stats_returns_empty_when_no_data(tmp_path, monkeypatch) -> Non
     stats = service.overview_stats()
     assert stats == {
         "total_sites": 0, "total_congested_sites": 0, "total_capex": 0.0,
-        "worst_congested_sector": None, "worst_ookla_cluster": None, "worst_mr_cluster": None,
+        "worst_congested_sectors": [], "worst_ookla_clusters": [], "worst_mr_clusters": [],
     }
 
 
@@ -410,14 +410,25 @@ def test_overview_stats_aggregates_network_wide(tmp_path, monkeypatch) -> None:
         ],
         ("latitude", "longitude", "signal_strength", "serving_cell", "data_source", "cluster_id"),
     )
+    _write_parquet(
+        tmp_path / "site_coordinates.parquet",
+        [("SITE001", "Central", "C1", 3.0, 101.5), ("SITE002", "Southern", "C2", 4.0, 102.5)],
+        ("site_id", "region", "cluster", "latitude", "longitude"),
+    )
 
     stats = service.overview_stats()
     assert stats["total_sites"] == 2
     assert stats["total_congested_sites"] == 1
     assert stats["total_capex"] == 50000.0
-    assert stats["worst_congested_sector"] == {"zoom_sector_id": "SITE001_Macro_2", "region": "Central", "congested_weeks": 7}
-    assert stats["worst_ookla_cluster"] == {"cluster_id": 0, "data_source": "Ookla", "point_count": 2, "avg_signal": -115.5}
-    assert stats["worst_mr_cluster"] == {"cluster_id": 5, "data_source": "MR", "point_count": 1, "avg_signal": -112.0}
+    assert stats["worst_congested_sectors"][0]["zoom_sector_id"] == "SITE001_Macro_2"
+    assert stats["worst_congested_sectors"][0]["congested_weeks"] == 7
+    assert stats["worst_congested_sectors"][0]["latitude"] == 3.0
+    assert stats["worst_ookla_clusters"][0] == {
+        "cluster_id": 0, "data_source": "Ookla", "point_count": 2, "avg_signal": -115.5, "latitude": 3.105, "longitude": 101.605,
+    }
+    assert stats["worst_mr_clusters"][0] == {
+        "cluster_id": 5, "data_source": "MR", "point_count": 1, "avg_signal": -112.0, "latitude": 3.5, "longitude": 102.0,
+    }
 
 
 def test_site_forecast_returns_empty_when_no_data(tmp_path, monkeypatch) -> None:
