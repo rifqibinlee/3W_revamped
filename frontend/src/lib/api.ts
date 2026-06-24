@@ -234,6 +234,34 @@ export interface GeoserverLayer {
   title: string
 }
 
+export interface NearbyFeature {
+  lat: number
+  lng: number
+  name: string
+  properties: Record<string, unknown>
+}
+
+export interface GensetRouteResult {
+  site: { lat: number; lng: number }
+  results: { name: string; lat: number; lng: number; osm_id: string; road_dist_m: number; road_dist_km: number; route_coords: [number, number][] }[]
+  substations_checked: number
+  substations_within_2km: number
+  error: string | null
+  elapsed_s: number
+}
+
+export interface CctvRunResult {
+  dissolved_buildings: GeoJSON.FeatureCollection
+  candidate_cctv: GeoJSON.FeatureCollection
+  surv_area: GeoJSON.FeatureCollection
+  aoi: GeoJSON.FeatureCollection
+  hex_grid: GeoJSON.FeatureCollection
+  poles: GeoJSON.FeatureCollection
+  cand_cctv_clean: GeoJSON.FeatureCollection
+  wedge: GeoJSON.FeatureCollection
+  camera_cost_summary: GeoJSON.FeatureCollection
+}
+
 export interface WorstCongestedSector {
   zoom_sector_id: string
   region: string
@@ -374,6 +402,27 @@ export const api = {
   },
 
   geoserverLayers: () => request<GeoserverLayer[]>('/analytics/geoserver-layers'),
+
+  nearbyGeoserverFeatures: (layer: string, lat: number, lng: number, radiusM = 2500) =>
+    request<NearbyFeature[]>(
+      `/analytics/nearby-geoserver-features?${new URLSearchParams({ layer, lat: String(lat), lng: String(lng), radius_m: String(radiusM) })}`,
+    ),
+
+  gensetRoute: (input: {
+    site_lat: number
+    site_lng: number
+    substations: { osm_id: string; name: string; lat: number; lng: number }[]
+    max_road_dist_m?: number
+    graph_buffer_m?: number
+  }) => request<GensetRouteResult>('/siteplanning/genset/route', { method: 'POST', body: JSON.stringify(input) }),
+
+  cctvRun: (input: {
+    building: object
+    parking: object
+    poles: object
+    cameras: { camera_type: string; hfov_deg: number; range_m: number; unit_price_rm: number }[]
+    offsets: number[]
+  }) => request<CctvRunResult>('/siteplanning/cctv/run', { method: 'POST', body: JSON.stringify(input) }),
 
   siteForecast: (siteId: string, metric: string, horizonWeeks: number) =>
     request<SiteForecastSeries>(

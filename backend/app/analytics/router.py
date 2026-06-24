@@ -38,6 +38,11 @@ def geoserver_layers() -> list[dict]:
     return service.geoserver_layers()
 
 
+@router.get("/nearby-geoserver-features")
+def nearby_geoserver_features(layer: str, lat: float, lng: float, radius_m: float = 2500) -> list[dict]:
+    return service.nearby_geoserver_features(layer, lat, lng, radius_m)
+
+
 @router.get("/site-coverage")
 def site_coverage(south: float, west: float, north: float, east: float) -> list[dict]:
     return service.site_coverage(south, west, north, east)

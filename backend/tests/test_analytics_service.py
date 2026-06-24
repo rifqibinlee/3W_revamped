@@ -553,3 +553,14 @@ def test_coverage_holes_by_band_rejects_unknown_band(tmp_path, monkeypatch) -> N
 def test_geoserver_layers_returns_empty_when_unreachable(monkeypatch) -> None:
     monkeypatch.setattr("app.analytics.service.settings.geoserver_url", "http://localhost:1")
     assert service.geoserver_layers() == []
+
+
+def test_nearby_geoserver_features_returns_empty_when_unreachable(monkeypatch) -> None:
+    monkeypatch.setattr("app.analytics.service.settings.geoserver_url", "http://localhost:1")
+    assert service.nearby_geoserver_features("substations", 3.1, 101.6, 2500) == []
+
+
+def test_feature_centroid_handles_point_and_polygon() -> None:
+    assert service._feature_centroid("Point", [101.6, 3.1]) == (101.6, 3.1)
+    assert service._feature_centroid("Polygon", [[[0, 0], [0, 2], [2, 2], [2, 0]]]) == (1.0, 1.0)
+    assert service._feature_centroid("LineString", [[0, 0], [1, 1]]) is None

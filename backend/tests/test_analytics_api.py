@@ -121,3 +121,10 @@ def test_geoserver_layers_endpoint_returns_empty_when_unreachable(client, monkey
     resp = client.get("/analytics/geoserver-layers")
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+def test_nearby_geoserver_features_endpoint_returns_empty_when_unreachable(client, monkeypatch) -> None:
+    monkeypatch.setattr("app.analytics.service.settings.geoserver_url", "http://localhost:1")
+    resp = client.get("/analytics/nearby-geoserver-features", params={"layer": "substations", "lat": 3.1, "lng": 101.6})
+    assert resp.status_code == 200
+    assert resp.json() == []

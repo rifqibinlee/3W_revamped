@@ -103,3 +103,49 @@ def test_full_pipeline_with_synthetic_inputs(tmp_path) -> None:
     # Building has 4 distinct corners -> 4 candidate points, each x3 offsets
     assert len(results["cand_cctv_clean"]["features"]) > 0
     assert len(results["wedge"]["features"]) == len(results["cand_cctv_clean"]["features"])
+
+
+def test_full_pipeline_prices_correctly_when_camera_type_is_not_named_type_a(tmp_path) -> None:
+    """Regression test: every candidate position used to be hardcoded
+    to camera_type "Type A" before merging with the caller's camera
+    spec table, so if the caller's CSV named its camera type anything
+    else, the merge silently dropped unit_price_rm to null/0 for every
+    position with no error."""
+    building_geojson = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature", "properties": {},
+            "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [0, 0.001], [0.001, 0.001], [0.001, 0], [0, 0]]]},
+        }],
+    }
+    parking_geojson = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature", "properties": {},
+            "geometry": {"type": "Polygon", "coordinates": [[[0.002, 0], [0.002, 0.001], [0.003, 0.001], [0.003, 0], [0.002, 0]]]},
+        }],
+    }
+    poles_geojson = {
+        "type": "FeatureCollection",
+        "features": [{"type": "Feature", "properties": {}, "geometry": {"type": "Point", "coordinates": [0.0025, 0.0005]}}],
+    }
+
+    building_path = tmp_path / "building.geojson"
+    parking_path = tmp_path / "parking.geojson"
+    poles_path = tmp_path / "poles.geojson"
+    building_path.write_text(json.dumps(building_geojson))
+    parking_path.write_text(json.dumps(parking_geojson))
+    poles_path.write_text(json.dumps(poles_geojson))
+
+    camera_csv = tmp_path / "cameras.csv"
+    camera_csv.write_text("camera_type,hfov_deg,range_m,unit_price_rm\nPTZ,90,50,3500\n")
+    offset_csv = tmp_path / "offsets.csv"
+    offset_csv.write_text("offset\n0\n120\n240\n")
+
+    results = run_cctv_pipeline(str(building_path), str(parking_path), str(poles_path), str(camera_csv), str(offset_csv))
+
+    cost_rows = results["camera_cost_summary"]["features"]
+    assert len(cost_rows) == 1
+    assert cost_rows[0]["properties"]["camera_type"] == "PTZ"
+    assert cost_rows[0]["properties"]["unit_price_rm"] == 3500
+    assert cost_rows[0]["properties"]["total_cost_rm"] > 0

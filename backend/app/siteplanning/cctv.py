@@ -140,7 +140,16 @@ def run_cctv_pipeline(building_path, parking_path, poles_path, camera_csv_path, 
     gdf_all_3az = pd.concat([gdf_pole_3az, gdf_building_3az], ignore_index=True)
     if len(gdf_all_3az) > 0:
         gdf_all_3az = gpd.GeoDataFrame(gdf_all_3az, crs=gdf_building.crs)
-        gdf_all_3az["camera_type"] = "Type A"  # legacy model hardcodes a single camera type
+        # The legacy model hardcodes a single camera type for every
+        # candidate position — preserved here, but using the caller's
+        # actual first camera type rather than the literal "Type A",
+        # since the later merge (on camera_type) silently drops
+        # hfov_deg/range_m/unit_price_rm to null for every row whenever
+        # the caller's camera CSV doesn't have a row named exactly
+        # "Type A" — previously left every position priced at RM0 with
+        # no error.
+        single_camera_type = camera_rows[0]["camera_type"] if camera_rows else "Type A"
+        gdf_all_3az["camera_type"] = single_camera_type
     else:
         gdf_all_3az = gpd.GeoDataFrame(
             columns=["geometry", "base_az", "azimuth", "type", "camera_type"], crs=gdf_building.crs

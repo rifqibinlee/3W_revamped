@@ -7,8 +7,10 @@ import {
   api,
   ApiError,
   type AnnotationOut,
+  type CctvRunResult,
   type CoverageHolePoint,
   type CurrentStatusRow,
+  type GensetRouteResult,
   type GeoserverLayer,
   type MapBounds,
   type MapStats,
@@ -442,6 +444,27 @@ export function MapPage() {
   })
   const [geoserverLayerList, setGeoserverLayerList] = useState<GeoserverLayer[]>([])
   const [activeGeoserverLayers, setActiveGeoserverLayers] = useState<Set<string>>(new Set())
+
+  const [toolsMenuOpen, setToolsMenuOpen] = useState(false)
+  const [activeToolPanel, setActiveToolPanel] = useState<'none' | 'genset' | 'cctv' | 'bitcoin'>('none')
+
+  const [gensetSiteId, setGensetSiteId] = useState('')
+  const [gensetSubstationLayer, setGensetSubstationLayer] = useState('')
+  const [gensetStatus, setGensetStatus] = useState<string | null>(null)
+  const [gensetResult, setGensetResult] = useState<GensetRouteResult | null>(null)
+
+  const [cctvBuildingFile, setCctvBuildingFile] = useState<File | null>(null)
+  const [cctvParkingFile, setCctvParkingFile] = useState<File | null>(null)
+  const [cctvPolesFile, setCctvPolesFile] = useState<File | null>(null)
+  const [cctvOffsets, setCctvOffsets] = useState('5,10')
+  const [cctvStatus, setCctvStatus] = useState<string | null>(null)
+  const [cctvResult, setCctvResult] = useState<CctvRunResult | null>(null)
+
+  const [bitcoinSiteIds, setBitcoinSiteIds] = useState('')
+  const [bitcoinBuildingLayer, setBitcoinBuildingLayer] = useState('')
+  const [bitcoinSubstationLayer, setBitcoinSubstationLayer] = useState('')
+  const [bitcoinStatus, setBitcoinStatus] = useState<string | null>(null)
+  const [bitcoinResult, setBitcoinResult] = useState<{ buildingCount: number; nearestSubstation: string | null; nearestDistM: number | null } | null>(null)
 
   function toggleLayer(key: keyof typeof layerToggles) {
     setLayerToggles((prev) => ({ ...prev, [key]: !prev[key] }))
@@ -984,6 +1007,171 @@ export function MapPage() {
     setPendingBufferCenter(null)
   }
 
+  // Genset/substation routing: site-by-site, no file upload needed —
+  // matches the legacy tool's single-site flow. Substation candidates
+  // come from a GeoServer layer the admin publishes (picked from the
+  // same layer list the Layers panel already fetches), not a
+  // third-party API — unlike the legacy app, this never sends real
+  // site coordinates outside our own infrastructure.
+  async function runGenset() {
+    setGensetResult(null)
+    if (!gensetSubstationLayer) {
+      setGensetStatus('Pick a GeoServer layer with substation locations first')
+      return
+    }
+    setGensetStatus('Looking up site…')
+    try {
+      const detail = await api.siteDetail(gensetSiteId.trim().toUpperCase())
+      if (!detail.site) {
+        setGensetStatus(`Site ${gensetSiteId} not found`)
+        return
+      }
+      const { latitude, longitude } = detail.site
+      setGensetStatus('Querying nearby substations…')
+      const features = await api.nearbyGeoserverFeatures(gensetSubstationLayer, latitude, longitude, 2500)
+      const substations = features.map((f, i) => ({ osm_id: String(f.properties.osm_id ?? i), name: f.name, lat: f.lat, lng: f.lng }))
+
+      if (substations.length === 0) {
+        setGensetStatus(`No substations found within 2.5km on layer "${gensetSubstationLayer}"`)
+        return
+      }
+      setGensetStatus('Routing to nearest substations…')
+      const result = await api.gensetRoute({ site_lat: latitude, site_lng: longitude, substations })
+      setGensetResult(result)
+      setGensetStatus(result.error ?? `${result.substations_within_2km} substation(s) reachable within 2km of road network`)
+    } catch (e) {
+      setGensetStatus(e instanceof Error ? e.message : 'Genset lookup failed')
+    }
+  }
+
+  // CCTV planning: requires the same file uploads the legacy tool did
+  // (building/parking/poles GeoJSON, no single-site flow available
+  // since coverage depends on the whole area's geometry).
+  async function runCctv() {
+    if (!cctvBuildingFile || !cctvParkingFile || !cctvPolesFile) {
+      setCctvStatus('Building, parking, and poles files are all required')
+      return
+    }
+    setCctvResult(null)
+    setCctvStatus('Running pipeline…')
+    try {
+      const [building, parking, poles] = await Promise.all(
+        [cctvBuildingFile, cctvParkingFile, cctvPolesFile].map(async (f) => JSON.parse(await f.text())),
+      )
+      const offsets = cctvOffsets.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n))
+      const result = await api.cctvRun({
+        building, parking, poles,
+        cameras: [
+          { camera_type: 'PTZ', hfov_deg: 90, range_m: 50, unit_price_rm: 3500 },
+          { camera_type: 'Fixed', hfov_deg: 60, range_m: 30, unit_price_rm: 1800 },
+        ],
+        offsets: offsets.length > 0 ? offsets : [5],
+      })
+      setCctvResult(result)
+      setCctvStatus(`${result.candidate_cctv.features.length} candidate camera position(s) found`)
+    } catch (e) {
+      setCctvStatus(e instanceof Error ? e.message : 'CCTV pipeline failed — check that uploaded files are valid GeoJSON')
+    }
+  }
+
+  // Illegal Bitcoin-mining detection: triangulate a buffer from 2-3
+  // selected sites, then check our own GeoServer-published
+  // buildings/substations layers for anything nearby — the theory
+  // (ported from the legacy app's agent.py framing) being that heavy,
+  // unexplained congestion near a substation can indicate
+  // unauthorized power draw. Unlike the legacy app, which queried the
+  // public Overpass API directly from the browser with real site
+  // coordinates, this stays entirely within our own infrastructure.
+  async function runBitcoinMining() {
+    const ids = bitcoinSiteIds.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
+    if (ids.length < 2 || ids.length > 3) {
+      setBitcoinStatus('Select 2 or 3 site IDs (comma-separated)')
+      return
+    }
+    if (!bitcoinBuildingLayer || !bitcoinSubstationLayer) {
+      setBitcoinStatus('Pick a buildings layer and a substations layer first')
+      return
+    }
+    setBitcoinResult(null)
+    setBitcoinStatus('Looking up sites…')
+    try {
+      const details = await Promise.all(ids.map((id) => api.siteDetail(id)))
+      const points = details.filter((d) => d.site).map((d) => [d.site!.latitude, d.site!.longitude] as [number, number])
+      if (points.length < 2) {
+        setBitcoinStatus('Could not resolve enough of those site IDs')
+        return
+      }
+      const centerLat = points.reduce((s, p) => s + p[0], 0) / points.length
+      const centerLng = points.reduce((s, p) => s + p[1], 0) / points.length
+      const radiusM = Math.max(...points.map((p) => haversineDistanceMeters([centerLng, centerLat], [p[1], p[0]]))) || 500
+
+      setBitcoinStatus('Querying nearby buildings and substations…')
+      const [buildings, substations] = await Promise.all([
+        api.nearbyGeoserverFeatures(bitcoinBuildingLayer, centerLat, centerLng, radiusM),
+        api.nearbyGeoserverFeatures(bitcoinSubstationLayer, centerLat, centerLng, radiusM * 3),
+      ])
+
+      let nearestSubstation: string | null = null
+      let nearestDistM: number | null = null
+      for (const sub of substations) {
+        const dist = haversineDistanceMeters([centerLng, centerLat], [sub.lng, sub.lat])
+        if (nearestDistM === null || dist < nearestDistM) {
+          nearestDistM = dist
+          nearestSubstation = sub.name
+        }
+      }
+      setBitcoinResult({ buildingCount: buildings.length, nearestSubstation, nearestDistM })
+      setBitcoinStatus(
+        buildings.length === 0 && substations.length === 0
+          ? `No data on layers "${bitcoinBuildingLayer}"/"${bitcoinSubstationLayer}" yet — publish them in GeoServer to use this tool`
+          : `${buildings.length} candidate building(s) found within ${fmtDistance(radiusM)} of the triangulated center`,
+      )
+
+      const map = mapRef.current
+      if (map) {
+        const apply = () => {
+          const data: FeatureCollection = {
+            type: 'FeatureCollection',
+            features: buildings.map((b) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [b.lng, b.lat] }, properties: {} })),
+          }
+          const existing = map.getSource('bitcoin-buildings') as maplibregl.GeoJSONSource | undefined
+          if (existing) {
+            existing.setData(data)
+          } else {
+            map.addSource('bitcoin-buildings', { type: 'geojson', data })
+            map.addLayer({ id: 'bitcoin-buildings-circle', type: 'circle', source: 'bitcoin-buildings', paint: { 'circle-radius': 5, 'circle-color': '#dc2626' } })
+          }
+        }
+        if (map.isStyleLoaded()) apply()
+        else map.once('load', apply)
+      }
+    } catch (e) {
+      setBitcoinStatus(e instanceof Error ? e.message : 'Bitcoin-mining lookup failed')
+    }
+  }
+
+  // Render genset route lines once a result comes back
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !gensetResult) return
+    const data: FeatureCollection = {
+      type: 'FeatureCollection',
+      features: gensetResult.results.map((r) => ({ type: 'Feature', geometry: { type: 'LineString', coordinates: r.route_coords }, properties: { name: r.name } })),
+    }
+    const apply = () => {
+      const existing = map.getSource('genset-routes') as maplibregl.GeoJSONSource | undefined
+      if (existing) {
+        existing.setData(data)
+        return
+      }
+      if (!map.isStyleLoaded()) return
+      map.addSource('genset-routes', { type: 'geojson', data })
+      map.addLayer({ id: 'genset-routes-line', type: 'line', source: 'genset-routes', paint: { 'line-color': '#f97316', 'line-width': 3 } })
+    }
+    if (map.isStyleLoaded()) apply()
+    else map.once('load', apply)
+  }, [gensetResult])
+
   return (
     <div className="space-y-4">
       <GlassPanel className="flex flex-wrap items-end gap-3">
@@ -1122,6 +1310,39 @@ export function MapPage() {
                 </span>
               </div>
             )}
+
+            <div className="relative">
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">Tools</p>
+              <button
+                onClick={() => setToolsMenuOpen((v) => !v)}
+                title="Site planning tools"
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 text-white/80"
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                </svg>
+              </button>
+              {toolsMenuOpen && (
+                <div className="absolute left-0 top-full z-20 mt-2 w-44 rounded-2xl border border-white/15 bg-ink-900/95 p-2 text-xs backdrop-blur-xl">
+                  {([
+                    ['genset', 'Genset routing'],
+                    ['cctv', 'CCTV planning'],
+                    ['bitcoin', 'Bitcoin-mining check'],
+                  ] as const).map(([key, label]) => (
+                    <button
+                      key={key}
+                      onClick={() => {
+                        setActiveToolPanel(key)
+                        setToolsMenuOpen(false)
+                      }}
+                      className="block w-full rounded-lg px-2.5 py-1.5 text-left text-white/80 hover:bg-white/10"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             {(tool === 'line' || tool === 'polygon') && (
               <button
                 onClick={finishDraft}
@@ -1384,6 +1605,200 @@ export function MapPage() {
                 className="rounded-xl bg-gradient-to-r from-accent-400 to-accent-500 px-4 py-2 text-sm font-semibold text-ink-900"
               >
                 Save
+              </button>
+            </div>
+          </GlassPanel>
+        </div>
+      )}
+
+      {activeToolPanel === 'genset' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/60 backdrop-blur-sm">
+          <GlassPanel className="w-full max-w-sm">
+            <p className="mb-3.5 font-display text-sm font-semibold">Genset/substation routing</p>
+            <div className="mb-3">
+              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">Site ID</label>
+              <input
+                value={gensetSiteId}
+                onChange={(e) => setGensetSiteId(e.target.value)}
+                placeholder="e.g. N00377"
+                className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
+              />
+            </div>
+            <div className="mb-3">
+              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
+                Substations GeoServer layer
+              </label>
+              <select
+                value={gensetSubstationLayer}
+                onChange={(e) => setGensetSubstationLayer(e.target.value)}
+                className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
+              >
+                <option value="">Select a layer…</option>
+                {geoserverLayerList.map((l) => (
+                  <option key={l.name} value={l.name}>{l.title}</option>
+                ))}
+              </select>
+              {geoserverLayerList.length === 0 && (
+                <p className="mt-1 text-[11px] text-white/40">No GeoServer layers published yet.</p>
+              )}
+            </div>
+            {gensetStatus && <p className="mb-3 text-xs text-white/70">{gensetStatus}</p>}
+            {gensetResult && gensetResult.results.length > 0 && (
+              <ul className="mb-3 max-h-40 space-y-1 overflow-y-auto text-xs">
+                {gensetResult.results.map((r) => (
+                  <li key={r.osm_id} className="rounded-lg bg-white/5 px-2.5 py-1.5">
+                    <span className="font-semibold">{r.name}</span>
+                    <span className="text-white/55"> — {r.road_dist_km} km by road</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => { setActiveToolPanel('none'); setGensetResult(null); setGensetStatus(null) }}
+                className="rounded-xl border border-white/20 px-4 py-2 text-sm font-semibold text-white/70"
+              >
+                Close
+              </button>
+              <button
+                onClick={runGenset}
+                className="rounded-xl bg-gradient-to-r from-accent-400 to-accent-500 px-4 py-2 text-sm font-semibold text-ink-900"
+              >
+                Find route
+              </button>
+            </div>
+          </GlassPanel>
+        </div>
+      )}
+
+      {activeToolPanel === 'cctv' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/60 backdrop-blur-sm">
+          <GlassPanel className="w-full max-w-sm">
+            <p className="mb-3.5 font-display text-sm font-semibold">CCTV camera planning</p>
+            {([
+              ['Building footprints (GeoJSON)', cctvBuildingFile, setCctvBuildingFile],
+              ['Parking areas (GeoJSON)', cctvParkingFile, setCctvParkingFile],
+              ['Existing poles (GeoJSON)', cctvPolesFile, setCctvPolesFile],
+            ] as const).map(([label, file, setFile]) => (
+              <div key={label} className="mb-2.5">
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">{label}</label>
+                <input
+                  type="file"
+                  accept=".geojson,.json"
+                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                  className="w-full text-xs text-white/70"
+                />
+                {file && <p className="mt-0.5 text-[11px] text-emerald-300">{file.name}</p>}
+              </div>
+            ))}
+            <div className="mb-3">
+              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
+                Setback offsets (meters, comma-separated)
+              </label>
+              <input
+                value={cctvOffsets}
+                onChange={(e) => setCctvOffsets(e.target.value)}
+                className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
+              />
+            </div>
+            {cctvStatus && <p className="mb-3 text-xs text-white/70">{cctvStatus}</p>}
+            {cctvResult && cctvResult.camera_cost_summary.features.length > 0 && (
+              <ul className="mb-3 space-y-1 text-xs">
+                {cctvResult.camera_cost_summary.features.map((f, i) => (
+                  <li key={i} className="rounded-lg bg-white/5 px-2.5 py-1.5">
+                    <span className="font-semibold">{String(f.properties?.camera_type)}</span>
+                    <span className="text-white/55"> — {String(f.properties?.count)}× — {fmtCurrency(Number(f.properties?.total_cost_rm))}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => { setActiveToolPanel('none'); setCctvResult(null); setCctvStatus(null) }}
+                className="rounded-xl border border-white/20 px-4 py-2 text-sm font-semibold text-white/70"
+              >
+                Close
+              </button>
+              <button
+                onClick={runCctv}
+                className="rounded-xl bg-gradient-to-r from-accent-400 to-accent-500 px-4 py-2 text-sm font-semibold text-ink-900"
+              >
+                Run
+              </button>
+            </div>
+          </GlassPanel>
+        </div>
+      )}
+
+      {activeToolPanel === 'bitcoin' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/60 backdrop-blur-sm">
+          <GlassPanel className="w-full max-w-sm">
+            <p className="mb-3.5 font-display text-sm font-semibold">Unauthorized power-draw check</p>
+            <div className="mb-3">
+              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
+                Site IDs (2-3, comma-separated)
+              </label>
+              <input
+                value={bitcoinSiteIds}
+                onChange={(e) => setBitcoinSiteIds(e.target.value)}
+                placeholder="e.g. N00377, N00412"
+                className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
+              />
+            </div>
+            <div className="mb-3">
+              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
+                Buildings GeoServer layer
+              </label>
+              <select
+                value={bitcoinBuildingLayer}
+                onChange={(e) => setBitcoinBuildingLayer(e.target.value)}
+                className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
+              >
+                <option value="">Select a layer…</option>
+                {geoserverLayerList.map((l) => (
+                  <option key={l.name} value={l.name}>{l.title}</option>
+                ))}
+              </select>
+            </div>
+            <div className="mb-3">
+              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
+                Substations GeoServer layer
+              </label>
+              <select
+                value={bitcoinSubstationLayer}
+                onChange={(e) => setBitcoinSubstationLayer(e.target.value)}
+                className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
+              >
+                <option value="">Select a layer…</option>
+                {geoserverLayerList.map((l) => (
+                  <option key={l.name} value={l.name}>{l.title}</option>
+                ))}
+              </select>
+            </div>
+            {bitcoinStatus && <p className="mb-3 text-xs text-white/70">{bitcoinStatus}</p>}
+            {bitcoinResult && (
+              <div className="mb-3 rounded-xl bg-white/5 p-2.5 text-xs">
+                <p>Candidate buildings: <span className="font-semibold">{bitcoinResult.buildingCount}</span></p>
+                {bitcoinResult.nearestSubstation && (
+                  <p>
+                    Nearest substation: <span className="font-semibold">{bitcoinResult.nearestSubstation}</span>
+                    {bitcoinResult.nearestDistM != null && ` (${fmtDistance(bitcoinResult.nearestDistM)})`}
+                  </p>
+                )}
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => { setActiveToolPanel('none'); setBitcoinResult(null); setBitcoinStatus(null) }}
+                className="rounded-xl border border-white/20 px-4 py-2 text-sm font-semibold text-white/70"
+              >
+                Close
+              </button>
+              <button
+                onClick={runBitcoinMining}
+                className="rounded-xl bg-gradient-to-r from-accent-400 to-accent-500 px-4 py-2 text-sm font-semibold text-ink-900"
+              >
+                Check
               </button>
             </div>
           </GlassPanel>

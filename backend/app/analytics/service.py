@@ -658,6 +658,63 @@ def geoserver_layers() -> list[dict]:
     return layers
 
 
+def nearby_geoserver_features(layer: str, lat: float, lng: float, radius_m: float) -> list[dict]:
+    """Point features within radius_m of (lat, lng) on a published
+    GeoServer layer, via WFS GetFeature + a DWITHIN CQL filter.
+
+    Used by the Genset and Bitcoin-mining map tools to find candidate
+    substations/buildings from our own infrastructure (an admin-managed
+    GeoServer layer) instead of querying a third-party API with real
+    site coordinates — the legacy app queried the public Overpass API
+    directly from the browser for this, which this rebuild deliberately
+    does not replicate. Returns an empty list (not an error) if
+    GeoServer is unreachable or the named layer doesn't exist yet,
+    same fallback behavior as geoserver_layers()."""
+    url = f"{settings.geoserver_url}/wfs"
+    cql_filter = f"DWITHIN(the_geom,POINT({lng} {lat}),{radius_m},meters)"
+    try:
+        resp = httpx.get(
+            url,
+            params={
+                "service": "WFS", "version": "2.0.0", "request": "GetFeature",
+                "typeName": layer, "outputFormat": "application/json", "cql_filter": cql_filter,
+            },
+            timeout=5.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except (httpx.HTTPError, ValueError):
+        return []
+
+    results = []
+    for feature in data.get("features", []):
+        geom = feature.get("geometry") or {}
+        coords = geom.get("coordinates")
+        point = _feature_centroid(geom.get("type"), coords)
+        if point is None:
+            continue
+        props = feature.get("properties") or {}
+        results.append({"lat": point[1], "lng": point[0], "name": props.get("name", feature.get("id", "")), "properties": props})
+    return results
+
+
+def _feature_centroid(geom_type: str | None, coords) -> tuple[float, float] | None:
+    """Cheap centroid for the geometry types GeoServer is likely to
+    return here (Point, or a Polygon/MultiPolygon building footprint) —
+    average of the outer ring's vertices, not a true area centroid,
+    which is precise enough for the proximity check these two tools
+    actually need."""
+    if geom_type == "Point" and coords:
+        return (coords[0], coords[1])
+    if geom_type == "Polygon" and coords:
+        ring = coords[0]
+        return (sum(p[0] for p in ring) / len(ring), sum(p[1] for p in ring) / len(ring))
+    if geom_type == "MultiPolygon" and coords:
+        ring = coords[0][0]
+        return (sum(p[0] for p in ring) / len(ring), sum(p[1] for p in ring) / len(ring))
+    return None
+
+
 def overview_stats() -> dict:
     """Network-wide stats, not scoped to the viewport — the panel above
     the bounds-scoped tab."""
