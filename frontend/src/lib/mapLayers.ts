@@ -2,22 +2,73 @@ import type { FeatureCollection } from 'geojson'
 import maplibregl from 'maplibre-gl'
 import { api, type CurrentStatusRow, type SiteDetail } from './api'
 
+// Covers the real site distribution (lat 1.3-6.2, lng 101.6-104.3) —
+// used by the Notes/Projects embedded maps to show coverage holes
+// network-wide rather than scoped to a moving viewport like the Map
+// page does.
+const NETWORK_BOUNDS = { south: 1.0, west: 101.0, north: 6.5, east: 104.6 }
+
+const SIGNAL_BAND_COLORS = { high: '#facc15', mid: '#f97316', low: '#dc2626' } as const
+
+// Network-wide coverage holes (MR/Ookla weak-signal points) — empty
+// until real MR/Ookla source files are ingested (none exist in
+// dataset_example), wired correctly so it lights up the moment that
+// data exists, same as the Map page's Signal layers.
+export async function addCoverageHolesLayer(map: maplibregl.Map, sourceId = 'embedded-coverage-holes') {
+  const bands: Array<'high' | 'mid' | 'low'> = ['high', 'mid', 'low']
+  const results = await Promise.all(bands.map((band) => api.coverageHolesByBand(NETWORK_BOUNDS, band).catch(() => [])))
+  const data: FeatureCollection = {
+    type: 'FeatureCollection',
+    features: bands.flatMap((band, i) =>
+      results[i].map((r) => ({
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [r.longitude, r.latitude] },
+        properties: { band },
+      })),
+    ),
+  }
+  const existing = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined
+  if (existing) {
+    existing.setData(data)
+    return
+  }
+  map.addSource(sourceId, { type: 'geojson', data })
+  map.addLayer({
+    id: `${sourceId}-circle`,
+    type: 'circle',
+    source: sourceId,
+    paint: {
+      'circle-radius': 4,
+      'circle-color': ['match', ['get', 'band'], 'high', SIGNAL_BAND_COLORS.high, 'mid', SIGNAL_BAND_COLORS.mid, SIGNAL_BAND_COLORS.low],
+    },
+  })
+}
+
 // Shared between the Map page and the small embedded maps on Notes/
 // Projects — those used to point at the bare demotiles vector style
 // (no roads/rivers/labels at all) and never rendered any site
 // markers, so they looked broken/empty. CartoDB Voyager is a free,
 // no-API-key raster basemap with roads/water/labels.
-export const BASE_STYLE: maplibregl.StyleSpecification = {
-  version: 8,
-  sources: {
-    'carto-voyager': {
-      type: 'raster',
-      tiles: ['https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png'],
-      tileSize: 256,
-      attribution: '© OpenStreetMap contributors © CARTO',
+//
+// A function, not a shared object constant: MapLibre's Map constructor
+// mutates the style spec object it's given (it normalizes/freezes
+// parts of it), so three pages all passing the exact same object
+// reference to their own `new maplibregl.Map()` caused the second and
+// third instances to silently fail to render — each page needs its
+// own fresh copy.
+export function getBaseStyle(): maplibregl.StyleSpecification {
+  return {
+    version: 8,
+    sources: {
+      'carto-voyager': {
+        type: 'raster',
+        tiles: ['https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png'],
+        tileSize: 256,
+        attribution: '© OpenStreetMap contributors © CARTO',
+      },
     },
-  },
-  layers: [{ id: 'carto-voyager-layer', type: 'raster', source: 'carto-voyager' }],
+    layers: [{ id: 'carto-voyager-layer', type: 'raster', source: 'carto-voyager' }],
+  }
 }
 
 export function fmt(n: number | null | undefined, digits = 1): string {

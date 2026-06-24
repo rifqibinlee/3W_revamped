@@ -18,9 +18,7 @@ import {
   type SiteCoverageRow,
   type UserOut,
 } from '../lib/api'
-import { addStatusLayer, BASE_STYLE, fmt, statusGeoJson } from '../lib/mapLayers'
-
-const STYLE_URL = BASE_STYLE
+import { addStatusLayer, fmt, getBaseStyle, statusGeoJson } from '../lib/mapLayers'
 // Centered on the real site distribution across Peninsular Malaysia
 // (lat 1.3-6.2, lng 101.6-104.3), not just the Klang Valley — zoom 7
 // keeps the whole network visible by default instead of an empty patch.
@@ -288,7 +286,21 @@ export function MapPage() {
   const [measurePoints, setMeasurePoints] = useState<[number, number][]>([])
   const baseLayerIdsRef = useRef<string[]>([])
 
-  const [layersOpen, setLayersOpen] = useState(true)
+  const [layersOpen, setLayersOpen] = useState(false)
+  const [legendsOpen, setLegendsOpen] = useState(true)
+
+  const LAYER_LEGEND_ITEMS = [
+    ['healthySites', 'Healthy sites', <span key="sw" className="h-2.5 w-2.5 rounded-full bg-[#3b82f6]" />],
+    ['congestedSites', 'Congested sites', <span key="sw" className="h-2.5 w-2.5 rounded-full bg-[#dc2626]" />],
+    ['heatmap', 'Heatmap (congested)', <span key="sw" className="h-2.5 w-5 rounded-sm" style={{ background: 'linear-gradient(90deg,#1d4ed8,#22d3ee,#facc15,#fb923c,#dc2626)' }} />],
+    ['coverage5g', '5G coverage', <span key="sw" className="h-2.5 w-2.5 rounded-full" style={{ background: TECH_COLORS['5G'] }} />],
+    ['coverage4g', '4G coverage', <span key="sw" className="h-2.5 w-2.5 rounded-full" style={{ background: TECH_COLORS['4G'] }} />],
+    ['coverage3g', '3G coverage', <span key="sw" className="h-2.5 w-2.5 rounded-full" style={{ background: TECH_COLORS['3G'] }} />],
+    ['coverage2g', '2G coverage', <span key="sw" className="h-2.5 w-2.5 rounded-full" style={{ background: TECH_COLORS['2G'] }} />],
+    ['signalHigh', 'Signal (-100 to -120)', <span key="sw" className="h-2.5 w-2.5 rounded-full bg-[#facc15]" />],
+    ['signalMid', 'Signal (-121 to -130)', <span key="sw" className="h-2.5 w-2.5 rounded-full bg-[#f97316]" />],
+    ['signalLow', 'Signal (<-130)', <span key="sw" className="h-2.5 w-2.5 rounded-full bg-[#dc2626]" />],
+  ] as const
   const [baseMap, setBaseMap] = useState<'normal' | 'satellite'>('normal')
   const [layerToggles, setLayerToggles] = useState({
     healthySites: true, congestedSites: true, heatmap: false,
@@ -362,7 +374,7 @@ export function MapPage() {
     if (splitActive || !containerRef.current) return
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: STYLE_URL,
+      style: getBaseStyle(),
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
     })
@@ -441,13 +453,13 @@ export function MapPage() {
 
     const left = new maplibregl.Map({
       container: splitLeftRef.current,
-      style: STYLE_URL,
+      style: getBaseStyle(),
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
     })
     const right = new maplibregl.Map({
       container: splitRightRef.current,
-      style: STYLE_URL,
+      style: getBaseStyle(),
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
     })
@@ -1267,8 +1279,8 @@ export function MapPage() {
 
         {!splitActive && (
           <>
-            <div className="relative z-30">
-              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">Draw</p>
+            <div className="relative z-30 flex flex-col items-center">
+              <p className="mb-1 whitespace-nowrap text-[10px] font-semibold uppercase tracking-wider text-white/45">Draw</p>
               <button
                 onClick={() => {
                   setDrawMenuOpen((v) => !v)
@@ -1307,8 +1319,8 @@ export function MapPage() {
                 </div>
               )}
             </div>
-            <div>
-              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">&nbsp;</p>
+            <div className="flex flex-col items-center">
+              <p className="mb-1 whitespace-nowrap text-[10px] font-semibold uppercase tracking-wider text-white/45">&nbsp;</p>
               {tool !== 'none' ? (
                 <button
                   onClick={() => {
@@ -1324,8 +1336,8 @@ export function MapPage() {
               )}
             </div>
 
-            <div>
-              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">Measure</p>
+            <div className="flex flex-col items-center">
+              <p className="mb-1 whitespace-nowrap text-[10px] font-semibold uppercase tracking-wider text-white/45">Measure</p>
               <button
                 onClick={() => {
                   if (!measureActive) {
@@ -1347,8 +1359,8 @@ export function MapPage() {
               </button>
             </div>
 
-            <div className="relative z-30">
-              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">Genset</p>
+            <div className="relative z-30 flex flex-col items-center">
+              <p className="mb-1 whitespace-nowrap text-[10px] font-semibold uppercase tracking-wider text-white/45">Genset</p>
               <button
                 onClick={() => {
                   setGensetMenuOpen((v) => !v)
@@ -1385,8 +1397,8 @@ export function MapPage() {
               )}
             </div>
 
-            <div>
-              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">CCTV</p>
+            <div className="flex flex-col items-center">
+              <p className="mb-1 whitespace-nowrap text-[10px] font-semibold uppercase tracking-wider text-white/45">CCTV</p>
               <button
                 onClick={() => setActiveToolPanel('cctv')}
                 title="CCTV camera planning"
@@ -1399,8 +1411,8 @@ export function MapPage() {
               </button>
             </div>
 
-            <div>
-              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">Power check</p>
+            <div className="flex flex-col items-center">
+              <p className="mb-1 whitespace-nowrap text-[10px] font-semibold uppercase tracking-wider text-white/45">Power check</p>
               <button
                 onClick={() => setRightPanel((v) => (v === 'bitcoin' ? 'none' : 'bitcoin'))}
                 title="Unauthorized power-draw check"
@@ -1576,11 +1588,23 @@ export function MapPage() {
           <div className="relative h-[55vh] w-full">
             <div ref={containerRef} className="h-full w-full overflow-hidden rounded-3xl border border-white/15" />
 
-            <div className="absolute bottom-3 left-3 z-10">
+            {/* Layers — controls: base map mode + which layers are on.
+                Top-left. */}
+            <div className="absolute left-3 top-3 z-10">
+              <button
+                onClick={() => setLayersOpen((v) => !v)}
+                title="Layers"
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 bg-ink-900/90 text-white/80 backdrop-blur-sm"
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                </svg>
+              </button>
+
               {layersOpen && (
-                <div className="mb-2 max-h-[48vh] w-64 overflow-y-auto rounded-2xl border border-white/15 bg-ink-900/95 p-3 text-xs text-white/85 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.6)] backdrop-blur-xl">
+                <div className="mt-2 max-h-[48vh] w-64 overflow-y-auto rounded-2xl border border-white/15 bg-ink-900/95 p-3 text-xs text-white/85 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.6)] backdrop-blur-xl">
                   <div className="mb-2 flex items-center justify-between">
-                    <p className="font-display text-sm font-semibold text-white">Legends</p>
+                    <p className="font-display text-sm font-semibold text-white">Layers</p>
                     <button onClick={() => setLayersOpen(false)} className="text-white/40 hover:text-white">
                       <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M6 6l12 12M18 6 6 18" />
@@ -1603,20 +1627,7 @@ export function MapPage() {
 
                   <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/45">Layers</p>
                   <div className="mb-3 space-y-1">
-                    {(
-                      [
-                        ['healthySites', 'Healthy sites', <span key="sw" className="h-2.5 w-2.5 rounded-full bg-[#3b82f6]" />],
-                        ['congestedSites', 'Congested sites', <span key="sw" className="h-2.5 w-2.5 rounded-full bg-[#dc2626]" />],
-                        ['heatmap', 'Heatmap (congested)', <span key="sw" className="h-2.5 w-5 rounded-sm" style={{ background: 'linear-gradient(90deg,#1d4ed8,#22d3ee,#facc15,#fb923c,#dc2626)' }} />],
-                        ['coverage5g', '5G coverage', <span key="sw" className="h-2.5 w-2.5 rounded-full" style={{ background: TECH_COLORS['5G'] }} />],
-                        ['coverage4g', '4G coverage', <span key="sw" className="h-2.5 w-2.5 rounded-full" style={{ background: TECH_COLORS['4G'] }} />],
-                        ['coverage3g', '3G coverage', <span key="sw" className="h-2.5 w-2.5 rounded-full" style={{ background: TECH_COLORS['3G'] }} />],
-                        ['coverage2g', '2G coverage', <span key="sw" className="h-2.5 w-2.5 rounded-full" style={{ background: TECH_COLORS['2G'] }} />],
-                        ['signalHigh', 'Signal (-100 to -120)', <span key="sw" className="h-2.5 w-2.5 rounded-full bg-[#facc15]" />],
-                        ['signalMid', 'Signal (-121 to -130)', <span key="sw" className="h-2.5 w-2.5 rounded-full bg-[#f97316]" />],
-                        ['signalLow', 'Signal (<-130)', <span key="sw" className="h-2.5 w-2.5 rounded-full bg-[#dc2626]" />],
-                      ] as const
-                    ).map(([key, label, swatch]) => (
+                    {LAYER_LEGEND_ITEMS.map(([key, label, swatch]) => (
                       <label key={key} className={`flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-white/10 ${layerToggles[key] ? '' : 'opacity-50'}`}>
                         <input type="checkbox" checked={layerToggles[key]} onChange={() => toggleLayer(key)} className="accent-sky-400" />
                         {swatch}
@@ -1645,14 +1656,56 @@ export function MapPage() {
                   )}
                 </div>
               )}
+            </div>
+
+            {/* Legends — read-only, dynamic: only shows a color key for
+                whichever layers are actually toggled on above (base map
+                mode isn't a "layer" so it's excluded). Bottom-left,
+                collapsible, open by default. */}
+            <div className="absolute bottom-3 left-3 z-10">
+              {legendsOpen && (
+                <div className="mb-2 max-h-[40vh] w-56 overflow-y-auto rounded-2xl border border-white/15 bg-ink-900/95 p-3 text-xs text-white/85 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.6)] backdrop-blur-xl">
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="font-display text-sm font-semibold text-white">Legends</p>
+                    <button onClick={() => setLegendsOpen(false)} className="text-white/40 hover:text-white">
+                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M6 6l12 12M18 6 6 18" />
+                      </svg>
+                    </button>
+                  </div>
+                  {(() => {
+                    const activeLayers = LAYER_LEGEND_ITEMS.filter(([key]) => layerToggles[key])
+                    const activeGeo = geoserverLayerList.filter((l) => activeGeoserverLayers.has(l.name))
+                    if (activeLayers.length === 0 && activeGeo.length === 0) {
+                      return <p className="text-white/40">No layers toggled on.</p>
+                    }
+                    return (
+                      <div className="space-y-1">
+                        {activeLayers.map(([key, label, swatch]) => (
+                          <div key={key} className="flex items-center gap-2 px-1.5 py-0.5">
+                            {swatch}
+                            {label}
+                          </div>
+                        ))}
+                        {activeGeo.map((l) => (
+                          <div key={l.name} className="flex items-center gap-2 px-1.5 py-0.5">
+                            <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+                            {l.title}
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })()}
+                </div>
+              )}
 
               <button
-                onClick={() => setLayersOpen((v) => !v)}
+                onClick={() => setLegendsOpen((v) => !v)}
                 title="Legends"
                 className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 bg-ink-900/90 text-white/80 backdrop-blur-sm"
               >
                 <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                  <path d="M4 6h16M4 12h10M4 18h7" />
                 </svg>
               </button>
             </div>

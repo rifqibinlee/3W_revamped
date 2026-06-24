@@ -1,11 +1,10 @@
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { GlassPanel } from '../components/GlassPanel'
 import { api, ApiError, type AnnotationOut, type ProjectOut } from '../lib/api'
-import { addStatusLayer, BASE_STYLE } from '../lib/mapLayers'
+import { addCoverageHolesLayer, addStatusLayer, getBaseStyle } from '../lib/mapLayers'
 
-const STYLE_URL = BASE_STYLE
 const DEFAULT_CENTER: [number, number] = [101.5, 3.1]
 
 export function Notes() {
@@ -19,7 +18,6 @@ export function Notes() {
   const [description, setDescription] = useState('')
   const [creating, setCreating] = useState(false)
 
-  const mapContainerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
 
   function load() {
@@ -43,23 +41,26 @@ export function Notes() {
     api.listAnnotations(selectedId).then(setAnnotations).catch(() => setAnnotations([]))
   }, [selectedId])
 
-  useEffect(() => {
-    if (!mapContainerRef.current) return
-    const map = new maplibregl.Map({
-      container: mapContainerRef.current,
-      style: STYLE_URL,
-      center: DEFAULT_CENTER,
-      zoom: 11,
-    })
+  // A ref callback, not useRef + useEffect(..., []) — the page shows a
+  // "Loading…" early return on first mount, so the map container div
+  // doesn't exist in the DOM on the very first render. A plain
+  // useEffect([]) only fires once, right after that first commit, and
+  // finds a null ref forever after; a callback ref fires whenever the
+  // node actually attaches, even if that's on a later render once
+  // loading finishes.
+  const mapContainerRef = useCallback((node: HTMLDivElement | null) => {
+    if (mapRef.current) {
+      mapRef.current.remove()
+      mapRef.current = null
+    }
+    if (!node) return
+    const map = new maplibregl.Map({ container: node, style: getBaseStyle(), center: DEFAULT_CENTER, zoom: 11 })
     mapRef.current = map
     map.addControl(new maplibregl.NavigationControl(), 'top-right')
     map.on('load', () => {
       api.currentStatus().then((rows) => addStatusLayer(map, 'note-sites', rows)).catch(() => undefined)
+      addCoverageHolesLayer(map).catch(() => undefined)
     })
-    return () => {
-      map.remove()
-      mapRef.current = null
-    }
   }, [])
 
   useEffect(() => {
