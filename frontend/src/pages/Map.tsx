@@ -55,7 +55,7 @@ const DRAW_TOOLS: { tool: DrawTool; label: string; icon: ReactElement }[] = [
     tool: 'point',
     label: 'Point',
     icon: (
-      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="4" fill="currentColor" />
       </svg>
     ),
@@ -64,7 +64,7 @@ const DRAW_TOOLS: { tool: DrawTool; label: string; icon: ReactElement }[] = [
     tool: 'line',
     label: 'Line',
     icon: (
-      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="5" cy="19" r="2" fill="currentColor" />
         <circle cx="19" cy="5" r="2" fill="currentColor" />
         <line x1="6.5" y1="17.5" x2="17.5" y2="6.5" />
@@ -75,7 +75,7 @@ const DRAW_TOOLS: { tool: DrawTool; label: string; icon: ReactElement }[] = [
     tool: 'polygon',
     label: 'Polygon',
     icon: (
-      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <polygon points="12,3 21,9 17,21 7,21 3,9" />
       </svg>
     ),
@@ -84,7 +84,7 @@ const DRAW_TOOLS: { tool: DrawTool; label: string; icon: ReactElement }[] = [
     tool: 'buffer',
     label: 'Buffer',
     icon: (
-      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="3" fill="currentColor" />
         <circle cx="12" cy="12" r="8" strokeDasharray="3 3" />
       </svg>
@@ -100,7 +100,7 @@ function statusGeoJson(rows: CurrentStatusRow[]): FeatureCollection {
       .map((r) => ({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [r.longitude as number, r.latitude as number] },
-        properties: { site_id: r.site_id, region: r.region, congested: r.congested },
+        properties: { site_id: r.site_id, region: r.region, congested: r.congested, congestedFlag: r.congested ? 1 : 0 },
       })),
   }
 }
@@ -248,9 +248,6 @@ const CONGESTED_RATIO_COLOR: maplibregl.ExpressionSpecification = [
 
 function addStatusLayer(map: maplibregl.Map, sourceId: string, rows: CurrentStatusRow[], onSiteClick?: (siteId: string) => void) {
   const data = statusGeoJson(rows)
-  for (const f of data.features) {
-    (f.properties as Record<string, unknown>).congestedFlag = f.properties?.congested ? 1 : 0
-  }
 
   const existing = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined
   if (existing) {
@@ -468,6 +465,7 @@ export function MapPage() {
   const [overview, setOverview] = useState<OverviewStats | null>(null)
   const [mapBounds, setMapBounds] = useState<MapBounds | null>(null)
   const [currentStats, setCurrentStats] = useState<MapStats | null>(null)
+  const [currentStatusRows, setCurrentStatusRows] = useState<CurrentStatusRow[]>([])
   const [forecastStats, setForecastStats] = useState<MapStats | null>(null)
   const [tool, setTool] = useState<DrawTool>('none')
   const [drawMenuOpen, setDrawMenuOpen] = useState(false)
@@ -478,7 +476,7 @@ export function MapPage() {
   const [layersOpen, setLayersOpen] = useState(false)
   const [baseMap, setBaseMap] = useState<'normal' | 'satellite'>('normal')
   const [layerToggles, setLayerToggles] = useState({
-    sites: true, heatmap: false,
+    healthySites: true, congestedSites: true, heatmap: false,
     coverage2g: false, coverage3g: false, coverage4g: false, coverage5g: false,
     signalHigh: false, signalMid: false, signalLow: false,
   })
@@ -552,7 +550,10 @@ export function MapPage() {
     map.addControl(new maplibregl.NavigationControl(), 'top-right')
 
     map.on('load', () => {
-      api.currentStatus().then((rows) => addStatusLayer(map, 'current-status', rows)).catch(() => undefined)
+      api.currentStatus().then((rows) => {
+        setCurrentStatusRows(rows)
+        addStatusLayer(map, 'current-status', rows)
+      }).catch(() => undefined)
       setMapBounds(readBounds(map))
 
       // Remember the normal-mode base style's own layers so the
@@ -814,18 +815,33 @@ export function MapPage() {
     }
   }, [baseMap, splitActive, mapBounds])
 
-  // Sites / Heatmap toggles — healthy and congested sites now share one
-  // combined cluster source (see addStatusLayer), so "Sites" is a
-  // single on/off rather than two independent toggles.
+  // Healthy/Congested toggles stay independently toggleable in the
+  // Layers panel, but feed ONE combined cluster source rather than two
+  // separately-clustering layers — so two on-screen cluster bubbles
+  // never compete at the same spot. Toggling either re-clusters the
+  // remaining subset by re-setting the source's data (not by hiding a
+  // whole separate layer).
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || splitActive) return
+    const filtered = currentStatusRows.filter(
+      (r) => (r.congested && layerToggles.congestedSites) || (!r.congested && layerToggles.healthySites),
+    )
+    const apply = () => {
+      const source = map.getSource('current-status') as maplibregl.GeoJSONSource | undefined
+      if (!source) return
+      source.setData(statusGeoJson(filtered))
+    }
+    if (map.isStyleLoaded()) apply()
+    else map.once('load', apply)
+  }, [currentStatusRows, layerToggles.healthySites, layerToggles.congestedSites, splitActive])
+
+  // Heatmap toggle
   useEffect(() => {
     const map = mapRef.current
     if (!map || splitActive || !map.isStyleLoaded()) return
-    const sitesVis = layerToggles.sites ? 'visible' : 'none'
-    for (const suffix of ['cluster-glow', 'cluster-circle', 'cluster-count', 'point']) {
-      if (map.getLayer(`current-status-${suffix}`)) map.setLayoutProperty(`current-status-${suffix}`, 'visibility', sitesVis)
-    }
     if (map.getLayer('heatmap-layer')) map.setLayoutProperty('heatmap-layer', 'visibility', layerToggles.heatmap ? 'visible' : 'none')
-  }, [layerToggles.sites, layerToggles.heatmap, splitActive, mapBounds])
+  }, [layerToggles.heatmap, splitActive])
 
   // Heatmap data — fed from the same current-status rows already
   // fetched for the marker layers, just re-requested here since the
@@ -1382,7 +1398,7 @@ export function MapPage() {
 
   return (
     <div className="space-y-4">
-      <GlassPanel className="relative z-30 flex flex-wrap items-end gap-3">
+      <GlassPanel className="relative z-30 flex flex-wrap items-start gap-3">
         <div>
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">View</p>
           <button
@@ -1443,7 +1459,7 @@ export function MapPage() {
                   tool !== 'none' ? 'bg-sky-400 text-ink-900' : 'border border-white/20 text-white/80'
                 }`}
               >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M12 5v14M5 12h14" />
                 </svg>
               </button>
@@ -1499,7 +1515,7 @@ export function MapPage() {
                   measureActive ? 'bg-sky-400 text-ink-900' : 'border border-white/20 text-white/80'
                 }`}
               >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M3 17 17 3M5 19l2-2M9 15l2-2M13 11l2-2" />
                   <path d="M17 3l4 4-14 14-4-4z" />
                 </svg>
@@ -1532,7 +1548,7 @@ export function MapPage() {
                 title="Genset/substation routing"
                 className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 text-white/80"
               >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M13 2 3 14h7l-1 8 11-12h-7l1-8z" />
                 </svg>
               </button>
@@ -1569,8 +1585,9 @@ export function MapPage() {
                 title="CCTV camera planning"
                 className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 text-white/80"
               >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 2v-7l-4 2z" />
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="7" width="13" height="10" rx="2" />
+                  <path d="M16 10.5 21 7v10l-5-3.5" />
                 </svg>
               </button>
             </div>
@@ -1582,7 +1599,7 @@ export function MapPage() {
                 title="Unauthorized power-draw check"
                 className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 text-white/80"
               >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="12" cy="12" r="9" />
                   <path d="M9.5 9h2l-1 3h2l-2.5 4M14.5 9h-1" />
                 </svg>
@@ -1613,13 +1630,13 @@ export function MapPage() {
                 title="Map layers"
                 className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 bg-ink-900/80 text-white/80 backdrop-blur-sm"
               >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
                 </svg>
               </button>
 
               {layersOpen && (
-                <div className="mt-2 max-h-[48vh] w-64 overflow-y-auto rounded-2xl border border-white/15 bg-ink-900/95 p-3 text-xs backdrop-blur-xl">
+                <GlassPanel className="mt-2 max-h-[48vh] w-64 overflow-y-auto !p-3 text-xs">
                   <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/45">Map</p>
                   <div className="mb-3 flex gap-1.5">
                     {(['normal', 'satellite'] as const).map((m) => (
@@ -1637,7 +1654,8 @@ export function MapPage() {
                   <div className="mb-3 space-y-1">
                     {(
                       [
-                        ['sites', 'Sites'],
+                        ['healthySites', 'Healthy sites'],
+                        ['congestedSites', 'Congested sites'],
                         ['heatmap', 'Heatmap (congested)'],
                         ['coverage5g', '5G coverage'],
                         ['coverage4g', '4G coverage'],
@@ -1673,7 +1691,7 @@ export function MapPage() {
                       ))}
                     </div>
                   )}
-                </div>
+                </GlassPanel>
               )}
             </div>
           </div>
@@ -2052,7 +2070,7 @@ export function MapPage() {
                     file ? 'border-emerald-400/40 bg-emerald-400/10 text-emerald-300' : 'border-white/20 bg-white/5 text-white/80 hover:bg-white/10'
                   }`}
                 >
-                  <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
+                  <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M12 16V4M7 9l5-5 5 5M5 20h14" />
                   </svg>
                   {file ? file.name : 'Choose file…'}

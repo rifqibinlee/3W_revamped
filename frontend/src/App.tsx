@@ -2,7 +2,6 @@ import type { ReactNode } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from './components/AppShell'
 import { useAuth } from './lib/useAuth'
-import { Agent } from './pages/Agent'
 import { Chat } from './pages/Chat'
 import { Dashboard } from './pages/Dashboard'
 import { DataManagement } from './pages/DataManagement'
@@ -76,14 +75,6 @@ export default function App() {
         element={
           <ProtectedRoute>
             <Pricing />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/agent"
-        element={
-          <ProtectedRoute>
-            <Agent />
           </ProtectedRoute>
         }
       />

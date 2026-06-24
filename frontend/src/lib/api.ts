@@ -149,7 +149,6 @@ export interface CommentOut {
 
 export interface CurrentStatusRow {
   site_id: string
-  zoom_sector_id: string
   region: string
   congested: boolean
   latitude: number | null

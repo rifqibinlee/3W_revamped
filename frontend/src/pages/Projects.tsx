@@ -42,6 +42,7 @@ export function Projects() {
 
   const [taskTitle, setTaskTitle] = useState('')
   const [taskAssigneeIds, setTaskAssigneeIds] = useState<string[]>([])
+  const [assigneeMenuOpen, setAssigneeMenuOpen] = useState(false)
   const [taskDueDate, setTaskDueDate] = useState('')
   const [commentBody, setCommentBody] = useState('')
 
@@ -155,6 +156,7 @@ export function Projects() {
       setTaskTitle('')
       setTaskAssigneeIds([])
       setTaskDueDate('')
+      setAssigneeMenuOpen(false)
       refreshDetail()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not create task')
@@ -325,19 +327,36 @@ export function Projects() {
                   placeholder="Task title"
                   className="min-w-[160px] flex-1 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
                 />
-                <select
-                  multiple
-                  value={taskAssigneeIds}
-                  onChange={(e) => setTaskAssigneeIds(Array.from(e.target.selectedOptions, (o) => o.value))}
-                  required
-                  className="min-w-[140px] rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs focus:border-sky-400/60 focus:outline-none"
-                >
-                  {users.map((u) => (
-                    <option key={u.id} value={u.id} className="bg-ink-900">
-                      {u.username}
-                    </option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setAssigneeMenuOpen((v) => !v)}
+                    className="min-w-[140px] rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-left text-xs text-white/80 focus:border-sky-400/60 focus:outline-none"
+                  >
+                    {taskAssigneeIds.length === 0
+                      ? 'Assignees…'
+                      : taskAssigneeIds.map((id) => userLabel(id)).join(', ')}
+                  </button>
+                  {assigneeMenuOpen && (
+                    <div className="absolute left-0 top-full z-20 mt-1 w-44 max-h-48 overflow-y-auto rounded-xl border border-white/15 bg-ink-900/95 p-1.5 text-xs backdrop-blur-xl">
+                      {users.map((u) => (
+                        <label key={u.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-white/5">
+                          <input
+                            type="checkbox"
+                            checked={taskAssigneeIds.includes(u.id)}
+                            onChange={(e) =>
+                              setTaskAssigneeIds((prev) =>
+                                e.target.checked ? [...prev, u.id] : prev.filter((id) => id !== u.id),
+                              )
+                            }
+                            className="accent-sky-400"
+                          />
+                          {u.username}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <input
                   type="date"
                   value={taskDueDate}

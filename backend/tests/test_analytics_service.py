@@ -575,3 +575,48 @@ def test_feature_centroid_handles_point_and_polygon() -> None:
     assert service._feature_centroid("Point", [101.6, 3.1]) == (101.6, 3.1)
     assert service._feature_centroid("Polygon", [[[0, 0], [0, 2], [2, 2], [2, 0]]]) == (1.0, 1.0)
     assert service._feature_centroid("LineString", [[0, 0], [1, 1]]) is None
+
+
+def test_current_status_returns_one_row_per_site_not_per_sector(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_parquet(
+        tmp_path / "congestion_analysis.parquet",
+        [
+            ("SITE001", "SITE001_Macro_1", "Central", False, 10, 2026),
+            ("SITE001", "SITE001_Macro_2", "Central", True, 10, 2026),
+            ("SITE001", "SITE001_Macro_3", "Central", False, 10, 2026),
+        ],
+        ("site_id", "zoom_sector_id", "region", "congested", "week", "year"),
+    )
+    _write_parquet(
+        tmp_path / "site_coordinates.parquet",
+        [("SITE001", "Central", "Unknown", 3.1, 101.6)],
+        ("site_id", "region", "cluster", "latitude", "longitude"),
+    )
+
+    rows = service.current_status()
+    assert len(rows) == 1  # three sectors at the same site collapse to one marker
+    assert rows[0]["site_id"] == "SITE001"
+    assert rows[0]["congested"] is True  # any sector congested -> site counts as congested
+
+
+def test_forecast_status_returns_one_row_per_site_not_per_sector(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_parquet(
+        tmp_path / "forecast_results.parquet",
+        [
+            ("SITE002_Macro_1", False, 13, 2026),
+            ("SITE002_Macro_2", True, 13, 2026),
+        ],
+        ("zoom_sector_id", "congested", "week", "year"),
+    )
+    _write_parquet(
+        tmp_path / "site_coordinates.parquet",
+        [("SITE002", "Central", "Unknown", 4.2, 102.1)],
+        ("site_id", "region", "cluster", "latitude", "longitude"),
+    )
+
+    rows = service.forecast_status(2026, 13)
+    assert len(rows) == 1
+    assert rows[0]["site_id"] == "SITE002"
+    assert rows[0]["congested"] is True

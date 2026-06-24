@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
+import logo from '../assets/3w-logo.png'
 import { useAuth } from '../lib/useAuth'
+import { AIPanel } from './AIPanel'
 import { AnimatedBackground } from './AnimatedBackground'
 
 const NAV_ITEMS = [
@@ -10,7 +12,6 @@ const NAV_ITEMS = [
   { to: '/projects', label: 'Projects' },
   { to: '/chat', label: 'Chat' },
   { to: '/pricing', label: 'CAPEX' },
-  { to: '/agent', label: 'Agent' },
 ]
 
 const ADMIN_NAV_ITEMS = [{ to: '/data', label: 'Data' }]
@@ -26,10 +27,11 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="relative mx-auto max-w-6xl px-7 py-6">
         <header className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-accent-400 to-sky-500 font-display text-sm font-bold text-ink-900">
-              3W
+            <img src={logo} alt="3W+" className="h-8 w-8" />
+            <div className="leading-tight">
+              <span className="block font-display text-base font-semibold">3W+</span>
+              <span className="block text-[10px] text-white/45">Brought to You by Advanced Analytics</span>
             </div>
-            <span className="font-display text-base font-semibold">3W ops</span>
           </div>
           <nav className="flex items-center gap-6 text-sm text-white/75">
             {navItems.map((item) => (
@@ -53,6 +55,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </header>
         <main>{children}</main>
       </div>
+      <AIPanel />
     </div>
   )
 }

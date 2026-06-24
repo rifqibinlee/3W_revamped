@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
+import logo from '../assets/3w-logo.png'
 import { AnimatedBackground } from '../components/AnimatedBackground'
 import { GlassPanel } from '../components/GlassPanel'
 import { ApiError } from '../lib/api'
@@ -32,10 +33,11 @@ export function Login() {
       <AnimatedBackground />
       <GlassPanel className="relative w-full max-w-sm">
         <div className="mb-6 flex items-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-accent-400 to-sky-500 font-display text-sm font-bold text-ink-900">
-            3W
+          <img src={logo} alt="3W+" className="h-9 w-9" />
+          <div className="leading-tight">
+            <span className="block font-display text-lg font-semibold">3W+</span>
+            <span className="block text-[11px] text-white/45">Brought to You by Advanced Analytics</span>
           </div>
-          <span className="font-display text-lg font-semibold">3W ops</span>
         </div>
         <h1 className="mb-1 font-display text-2xl font-semibold">Sign in</h1>
         <p className="mb-6 text-sm text-white/60">Network operations dashboard</p>

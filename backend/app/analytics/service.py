@@ -124,7 +124,15 @@ def site_forecast(site_id: str, metric: str, horizon_weeks: int = 8) -> dict:
 
 
 def current_status() -> list[dict]:
-    """Latest week's congestion status per site, joined with coordinates."""
+    """Latest week's congestion status per site, joined with coordinates.
+
+    One row per SITE, not per sector — congestion_analysis has ~2.9
+    sectors per site on average (17,650 sectors across 6,024 sites in
+    the real dataset), and a naive per-sector query produces several
+    markers stacked at the exact same coordinate, wildly inflating the
+    map's apparent site/cluster counts versus the "Total sites" stat
+    everywhere else on the page. A site counts as congested here if
+    any of its sectors are congested in their latest week."""
     congestion_path = _parquet_path("congestion_analysis")
     sites_path = _parquet_path("site_coordinates")
     if not congestion_path.exists() or not sites_path.exists():
@@ -138,13 +146,15 @@ def current_status() -> list[dict]:
                     PARTITION BY zoom_sector_id ORDER BY year DESC, week DESC
                 ) AS rn
                 FROM read_parquet('{congestion_path}')
+            ),
+            per_site AS (
+                SELECT site_id, any_value(region) AS region, bool_or(congested) AS congested
+                FROM latest WHERE rn = 1
+                GROUP BY site_id
             )
-            SELECT
-                c.site_id, c.zoom_sector_id, c.region, c.congested,
-                s.latitude, s.longitude
-            FROM latest c
-            LEFT JOIN read_parquet('{sites_path}') s ON c.site_id = s.site_id
-            WHERE c.rn = 1
+            SELECT p.site_id, p.region, p.congested, s.latitude, s.longitude
+            FROM per_site p
+            LEFT JOIN read_parquet('{sites_path}') s ON p.site_id = s.site_id
         """).fetchdf()
         return rows.to_dict("records")
     finally:
@@ -155,7 +165,11 @@ def forecast_status(year: int, week: int) -> list[dict]:
     """Forecast congestion status for a specific year/quarter-week (the
     legacy UI offers W13/W26/W39/W52), joined with coordinates. Region
     comes from the site join — forecast_results itself has no region
-    column (it's per-sector, not joined to site data)."""
+    column (it's per-sector, not joined to site data).
+
+    One row per SITE, not per sector — same reasoning as current_status:
+    avoids stacking several markers at the same coordinate and keeps
+    this in line with the "Total sites" count used everywhere else."""
     forecast_path = _parquet_path("forecast_results")
     sites_path = _parquet_path("site_coordinates")
     if not forecast_path.exists() or not sites_path.exists():
@@ -165,13 +179,15 @@ def forecast_status(year: int, week: int) -> list[dict]:
     try:
         rows = con.execute(
             f"""
-            SELECT
-                f.zoom_sector_id, f.congested, s.region,
-                s.site_id, s.latitude, s.longitude
-            FROM read_parquet('{forecast_path}') f
-            LEFT JOIN read_parquet('{sites_path}') s
-                ON split_part(f.zoom_sector_id, '_', 1) = s.site_id
-            WHERE f.year = ? AND f.week = ?
+            WITH per_site AS (
+                SELECT split_part(zoom_sector_id, '_', 1) AS site_id, bool_or(congested) AS congested
+                FROM read_parquet('{forecast_path}')
+                WHERE year = ? AND week = ?
+                GROUP BY site_id
+            )
+            SELECT p.site_id, p.congested, s.region, s.latitude, s.longitude
+            FROM per_site p
+            LEFT JOIN read_parquet('{sites_path}') s ON p.site_id = s.site_id
             """,
             [year, week],
         ).fetchdf()

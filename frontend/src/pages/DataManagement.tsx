@@ -204,13 +204,13 @@ export function DataManagement() {
                   selectedCategory === c.key ? 'bg-white/10 text-white' : 'text-white/70 hover:bg-white/5'
                 }`}
               >
-                <span className="flex items-center gap-2">
+                <span className="flex min-w-0 flex-1 items-center gap-2">
                   <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
                   </svg>
-                  {c.label}
+                  <span className="truncate">{c.label}</span>
                 </span>
-                <span className="text-xs text-white/40">{c.file_count}</span>
+                <span className="ml-2 shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-xs text-white/50">{c.file_count}</span>
               </button>
             ))}
           </div>
