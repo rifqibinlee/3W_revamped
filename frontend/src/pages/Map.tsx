@@ -7,10 +7,13 @@ import {
   api,
   ApiError,
   type AnnotationOut,
+  type CoverageHolePoint,
   type CurrentStatusRow,
+  type GeoserverLayer,
   type MapBounds,
   type MapStats,
   type OverviewStats,
+  type SiteCoverageRow,
   type SiteDetail,
   type UserOut,
 } from '../lib/api'
@@ -120,6 +123,33 @@ function bearingDegrees([lng1, lat1]: [number, number], [lng2, lat2]: [number, n
 
 function fmtDistance(meters: number): string {
   return meters >= 1000 ? `${(meters / 1000).toFixed(2)} km` : `${meters.toFixed(0)} m`
+}
+
+const TECH_COLORS: Record<string, string> = { '5G': '#eab308', '4G': '#3b82f6', '3G': '#f97316', '2G': '#6b7280' }
+
+// A 65° sector wedge centered on the cell's azimuth — the antenna's
+// real horizontal beamwidth varies by hardware and isn't in
+// site_coverage_params, so this is a representative approximation
+// (a common macro-sector beamwidth) rather than an exact pattern,
+// same simplification the legacy app's client-side annulus-sector
+// drawing made.
+function sectorWedgePolygon(center: [number, number], radiusMeters: number, azimuthDeg: number, beamwidthDeg = 65): Polygon {
+  const segments = 24
+  const [lng, lat] = center
+  const latRad = (lat * Math.PI) / 180
+  const metersPerDegLat = 111320
+  const metersPerDegLng = 111320 * Math.cos(latRad)
+  const startDeg = azimuthDeg - beamwidthDeg / 2
+  const coords: [number, number][] = [[lng, lat]]
+  for (let i = 0; i <= segments; i++) {
+    const bearing = ((startDeg + (i / segments) * beamwidthDeg) * Math.PI) / 180
+    coords.push([
+      lng + (radiusMeters * Math.sin(bearing)) / metersPerDegLng,
+      lat + (radiusMeters * Math.cos(bearing)) / metersPerDegLat,
+    ])
+  }
+  coords.push([lng, lat])
+  return { type: 'Polygon', coordinates: [coords] }
 }
 
 function fmt(n: number | null | undefined, digits = 1): string {
@@ -401,6 +431,21 @@ export function MapPage() {
   const [drawMenuOpen, setDrawMenuOpen] = useState(false)
   const [measureActive, setMeasureActive] = useState(false)
   const [measurePoints, setMeasurePoints] = useState<[number, number][]>([])
+  const baseLayerIdsRef = useRef<string[]>([])
+
+  const [layersOpen, setLayersOpen] = useState(false)
+  const [baseMap, setBaseMap] = useState<'normal' | 'satellite'>('normal')
+  const [layerToggles, setLayerToggles] = useState({
+    sites: true, congestedSites: true, heatmap: false,
+    coverage2g: false, coverage3g: false, coverage4g: false, coverage5g: false,
+    signalHigh: false, signalMid: false, signalLow: false,
+  })
+  const [geoserverLayerList, setGeoserverLayerList] = useState<GeoserverLayer[]>([])
+  const [activeGeoserverLayers, setActiveGeoserverLayers] = useState<Set<string>>(new Set())
+
+  function toggleLayer(key: keyof typeof layerToggles) {
+    setLayerToggles((prev) => ({ ...prev, [key]: !prev[key] }))
+  }
   const [draftPoints, setDraftPoints] = useState<[number, number][]>([])
   const [status, setStatus] = useState<string | null>(null)
 
@@ -439,6 +484,30 @@ export function MapPage() {
     map.on('load', () => {
       api.currentStatus().then((rows) => addStatusLayer(map, 'current-status', rows)).catch(() => undefined)
       setMapBounds(readBounds(map))
+
+      // Remember the demotiles base style's own layers so the
+      // satellite toggle can hide them without touching anything this
+      // page adds on top (clusters, draw sketches, etc).
+      baseLayerIdsRef.current = map.getStyle().layers.map((l) => l.id)
+      map.addSource('satellite-base', {
+        type: 'raster',
+        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+        tileSize: 256,
+        attribution: 'Esri',
+      })
+      map.addLayer({ id: 'satellite-base-layer', type: 'raster', source: 'satellite-base', layout: { visibility: 'none' } }, baseLayerIdsRef.current[0])
+
+      map.addSource('heatmap-source', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+      map.addLayer({
+        id: 'heatmap-layer',
+        type: 'heatmap',
+        source: 'heatmap-source',
+        layout: { visibility: 'none' },
+        paint: {
+          'heatmap-radius': 24,
+          'heatmap-color': ['interpolate', ['linear'], ['heatmap-density'], 0, 'rgba(0,0,0,0)', 0.5, '#facc15', 1, '#dc2626'],
+        },
+      })
     })
     map.on('moveend', () => setMapBounds(readBounds(map)))
 
@@ -633,6 +702,183 @@ export function MapPage() {
     if (map.isStyleLoaded()) apply()
     else map.once('load', apply)
   }, [measurePoints])
+
+  // Base map toggle: hide the demotiles vector layers and show the
+  // Esri satellite raster underneath everything this page adds, or
+  // the reverse.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || splitActive || !map.isStyleLoaded() || baseLayerIdsRef.current.length === 0) return
+    const satelliteVisible = baseMap === 'satellite'
+    map.setLayoutProperty('satellite-base-layer', 'visibility', satelliteVisible ? 'visible' : 'none')
+    for (const id of baseLayerIdsRef.current) {
+      map.setLayoutProperty(id, 'visibility', satelliteVisible ? 'none' : 'visible')
+    }
+  }, [baseMap, splitActive, mapBounds])
+
+  // Sites / Congested sites / Heatmap toggles
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || splitActive || !map.isStyleLoaded()) return
+    const normalVis = layerToggles.sites ? 'visible' : 'none'
+    const congestedVis = layerToggles.congestedSites ? 'visible' : 'none'
+    for (const suffix of ['cluster-circle', 'cluster-count', 'point']) {
+      if (map.getLayer(`current-status-normal-${suffix}`)) map.setLayoutProperty(`current-status-normal-${suffix}`, 'visibility', normalVis)
+      if (map.getLayer(`current-status-congested-${suffix}`)) map.setLayoutProperty(`current-status-congested-${suffix}`, 'visibility', congestedVis)
+    }
+    if (map.getLayer('heatmap-layer')) map.setLayoutProperty('heatmap-layer', 'visibility', layerToggles.heatmap ? 'visible' : 'none')
+  }, [layerToggles.sites, layerToggles.congestedSites, layerToggles.heatmap, splitActive, mapBounds])
+
+  // Heatmap data — fed from the same current-status rows already
+  // fetched for the marker layers, just re-requested here since the
+  // heatmap needs raw (unclustered) points, not the clustered source.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || splitActive || !layerToggles.heatmap) return
+    api.currentStatus().then((rows) => {
+      const source = map.getSource('heatmap-source') as maplibregl.GeoJSONSource | undefined
+      if (!source) return
+      source.setData({
+        type: 'FeatureCollection',
+        features: rows
+          .filter((r) => r.congested && r.longitude != null && r.latitude != null)
+          .map((r) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [r.longitude as number, r.latitude as number] }, properties: {} })),
+      })
+    }).catch(() => undefined)
+  }, [layerToggles.heatmap, splitActive])
+
+  // Coverage-by-technology wedges — fetched per viewport, one source
+  // per generation so each can be toggled independently.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || splitActive || !mapBounds) return
+    const anyOn = layerToggles.coverage2g || layerToggles.coverage3g || layerToggles.coverage4g || layerToggles.coverage5g
+    if (!anyOn) {
+      for (const tech of ['2g', '3g', '4g', '5g']) {
+        if (map.getLayer(`coverage-${tech}-fill`)) map.setLayoutProperty(`coverage-${tech}-fill`, 'visibility', 'none')
+      }
+      return
+    }
+    api.siteCoverage(mapBounds).then((rows: SiteCoverageRow[]) => {
+      const byTech: Record<string, SiteCoverageRow[]> = { '2G': [], '3G': [], '4G': [], '5G': [] }
+      for (const r of rows) byTech[r.technology]?.push(r)
+
+      const apply = () => {
+        for (const [tech, techRows] of Object.entries(byTech)) {
+          const key = tech.toLowerCase()
+          const sourceId = `coverage-${key}`
+          const toggleOn = layerToggles[`coverage${key}` as keyof typeof layerToggles]
+          const data: FeatureCollection = {
+            type: 'FeatureCollection',
+            features: techRows.map((r) => ({
+              type: 'Feature',
+              geometry: sectorWedgePolygon([r.longitude, r.latitude], r.coverage_radius_m, r.azimuth),
+              properties: {},
+            })),
+          }
+          const existing = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined
+          if (existing) {
+            existing.setData(data)
+            map.setLayoutProperty(`${sourceId}-fill`, 'visibility', toggleOn ? 'visible' : 'none')
+            continue
+          }
+          if (!map.isStyleLoaded()) continue
+          map.addSource(sourceId, { type: 'geojson', data })
+          map.addLayer({
+            id: `${sourceId}-fill`,
+            type: 'fill',
+            source: sourceId,
+            layout: { visibility: toggleOn ? 'visible' : 'none' },
+            paint: { 'fill-color': TECH_COLORS[tech], 'fill-opacity': 0.25 },
+          })
+        }
+      }
+      if (map.isStyleLoaded()) apply()
+      else map.once('load', apply)
+    }).catch(() => undefined)
+  }, [layerToggles.coverage2g, layerToggles.coverage3g, layerToggles.coverage4g, layerToggles.coverage5g, mapBounds, splitActive])
+
+  // Signal-strength band points — empty until real MR/Ookla source
+  // files are ingested (no coverage_holes data in dataset_example),
+  // wired correctly so it lights up the moment that data exists.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || splitActive || !mapBounds) return
+    const bands: Array<['high' | 'mid' | 'low', boolean]> = [
+      ['high', layerToggles.signalHigh], ['mid', layerToggles.signalMid], ['low', layerToggles.signalLow],
+    ]
+    for (const [band, on] of bands) {
+      const sourceId = `signal-${band}`
+      if (!on) {
+        if (map.getLayer(`${sourceId}-circle`)) map.setLayoutProperty(`${sourceId}-circle`, 'visibility', 'none')
+        continue
+      }
+      api.coverageHolesByBand(mapBounds, band).then((rows: CoverageHolePoint[]) => {
+        const data: FeatureCollection = {
+          type: 'FeatureCollection',
+          features: rows.map((r) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [r.longitude, r.latitude] }, properties: {} })),
+        }
+        const apply = () => {
+          const existing = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined
+          if (existing) {
+            existing.setData(data)
+            map.setLayoutProperty(`${sourceId}-circle`, 'visibility', 'visible')
+            return
+          }
+          if (!map.isStyleLoaded()) return
+          map.addSource(sourceId, { type: 'geojson', data })
+          map.addLayer({
+            id: `${sourceId}-circle`,
+            type: 'circle',
+            source: sourceId,
+            paint: { 'circle-radius': 4, 'circle-color': band === 'high' ? '#facc15' : band === 'mid' ? '#f97316' : '#dc2626' },
+          })
+        }
+        if (map.isStyleLoaded()) apply()
+        else map.once('load', apply)
+      }).catch(() => undefined)
+    }
+  }, [layerToggles.signalHigh, layerToggles.signalMid, layerToggles.signalLow, mapBounds, splitActive])
+
+  // GeoServer layers — fetch the published list once, add/remove a
+  // WMS raster tile source per layer the user actually toggles on.
+  useEffect(() => {
+    api.geoserverLayers().then(setGeoserverLayerList).catch(() => undefined)
+  }, [])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || splitActive) return
+    for (const layer of geoserverLayerList) {
+      const sourceId = `geoserver-${layer.name}`
+      const shouldShow = activeGeoserverLayers.has(layer.name)
+      if (!shouldShow) {
+        if (map.getLayer(`${sourceId}-layer`)) map.removeLayer(`${sourceId}-layer`)
+        if (map.getSource(sourceId)) map.removeSource(sourceId)
+        continue
+      }
+      if (map.getSource(sourceId)) continue
+      // GeoServer serves WMS tiles directly to the browser — no need
+      // to round-trip through our backend, same as the Esri satellite
+      // tiles above.
+      const geoserverUrl = import.meta.env.VITE_GEOSERVER_URL ?? 'http://localhost:8600/geoserver'
+      map.addSource(sourceId, {
+        type: 'raster',
+        tiles: [`${geoserverUrl}/wms?service=WMS&request=GetMap&layers=${encodeURIComponent(layer.name)}&styles=&format=image/png&transparent=true&version=1.1.1&srs=EPSG:4326&bbox={bbox-epsg-4326}&width=256&height=256`],
+        tileSize: 256,
+      })
+      map.addLayer({ id: `${sourceId}-layer`, type: 'raster', source: sourceId, paint: { 'raster-opacity': 0.7 } })
+    }
+  }, [activeGeoserverLayers, geoserverLayerList, splitActive])
+
+  function toggleGeoserverLayer(name: string) {
+    setActiveGeoserverLayers((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
 
   // Render the in-progress sketch for line/polygon tools
   useEffect(() => {
@@ -892,7 +1138,80 @@ export function MapPage() {
 
       <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
         {!splitActive && (
-          <div ref={containerRef} className="h-[55vh] w-full overflow-hidden rounded-3xl border border-white/15" />
+          <div className="relative h-[55vh] w-full">
+            <div ref={containerRef} className="h-full w-full overflow-hidden rounded-3xl border border-white/15" />
+
+            <div className="absolute right-3 top-3 z-10">
+              <button
+                onClick={() => setLayersOpen((v) => !v)}
+                title="Map layers"
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 bg-ink-900/80 text-white/80 backdrop-blur-sm"
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                </svg>
+              </button>
+
+              {layersOpen && (
+                <div className="mt-2 max-h-[48vh] w-64 overflow-y-auto rounded-2xl border border-white/15 bg-ink-900/95 p-3 text-xs backdrop-blur-xl">
+                  <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/45">Map</p>
+                  <div className="mb-3 flex gap-1.5">
+                    {(['normal', 'satellite'] as const).map((m) => (
+                      <button
+                        key={m}
+                        onClick={() => setBaseMap(m)}
+                        className={`flex-1 rounded-lg px-2 py-1.5 capitalize ${baseMap === m ? 'bg-sky-400 text-ink-900 font-semibold' : 'border border-white/15 text-white/70'}`}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+
+                  <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/45">Layers — Universal</p>
+                  <div className="mb-3 space-y-1">
+                    {(
+                      [
+                        ['sites', 'Site'],
+                        ['congestedSites', 'Congested site'],
+                        ['heatmap', 'Heatmap (congested)'],
+                        ['coverage5g', '5G coverage'],
+                        ['coverage4g', '4G coverage'],
+                        ['coverage3g', '3G coverage'],
+                        ['coverage2g', '2G coverage'],
+                        ['signalHigh', 'Signal (-100 to -120)'],
+                        ['signalMid', 'Signal (-121 to -130)'],
+                        ['signalLow', 'Signal (<-130)'],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <label key={key} className="flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-white/5">
+                        <input type="checkbox" checked={layerToggles[key]} onChange={() => toggleLayer(key)} className="accent-sky-400" />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+
+                  <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/45">Layers — GeoServer</p>
+                  {geoserverLayerList.length === 0 ? (
+                    <p className="text-white/40">No layers published (GeoServer not reachable, or nothing published yet).</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {geoserverLayerList.map((layer) => (
+                        <label key={layer.name} className="flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-white/5">
+                          <input
+                            type="checkbox"
+                            checked={activeGeoserverLayers.has(layer.name)}
+                            onChange={() => toggleGeoserverLayer(layer.name)}
+                            className="accent-sky-400"
+                          />
+                          {layer.title}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         )}
 
         {splitActive && (

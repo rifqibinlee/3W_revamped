@@ -13,7 +13,9 @@ this rebuild.
 
 from datetime import date, timedelta
 from pathlib import Path
+from xml.etree import ElementTree
 
+import httpx
 import numpy as np
 from scipy import stats
 from sklearn.linear_model import LinearRegression
@@ -525,6 +527,135 @@ def map_stats(
         }
     finally:
         con.close()
+
+
+# site_coverage_params.technology is messy vendor export data (raw
+# values seen in the real dataset_example export include '1', '3',
+# '7', '8', '0', 'GSM900', 'DCS1800', 'G1800', 'E-GSM900', 'L9', 'L18',
+# 'L21', 'L26', 'L900'..'L2600', 'NBIOT', '2G'/'3G'/'4G' explicit
+# strings, 'Unknown', 'nan', and NULL) — there's no documented mapping
+# from the numeric codes to a generation, so this only buckets the
+# values we can classify with confidence (explicit G-strings, GSM/DCS
+# band names = 2G, L-prefixed LTE band numbers = 4G) and drops
+# everything else rather than guessing. No 5G site exists in the
+# current dataset, so that bucket is wired up but will always be empty.
+_TECH_BUCKET_SQL = """
+    CASE
+        WHEN technology = '5G' THEN '5G'
+        WHEN technology = '4G' OR technology LIKE 'L%' OR technology = 'NBIOT' THEN '4G'
+        WHEN technology = '3G' THEN '3G'
+        WHEN technology = '2G' OR technology LIKE 'GSM%' OR technology LIKE 'DCS%' OR technology LIKE 'G%800%'
+             OR technology LIKE 'E-GSM%' THEN '2G'
+    END
+"""
+
+
+def site_coverage(south: float, west: float, north: float, east: float) -> list[dict]:
+    """Per-cell coverage wedge inputs (site position + azimuth + radius,
+    bucketed by technology generation) for the map's coverage-by-tech
+    toggle — client draws the actual sector wedge geometry, this just
+    supplies the real per-cell parameters behind it."""
+    sites_path = _parquet_path("site_coordinates")
+    params_path = _parquet_path("site_coverage_params")
+    if not sites_path.exists() or not params_path.exists():
+        return []
+
+    con = get_connection()
+    try:
+        rows = con.execute(
+            f"""
+            SELECT p.site_id, s.latitude, s.longitude, p.azimuth, {_TECH_BUCKET_SQL} AS tech, p.coverage_radius_m
+            FROM read_parquet('{params_path}') p
+            JOIN read_parquet('{sites_path}') s ON p.site_id = s.site_id
+            WHERE s.longitude BETWEEN ? AND ? AND s.latitude BETWEEN ? AND ?
+              AND p.azimuth IS NOT NULL AND p.coverage_radius_m IS NOT NULL
+            """,
+            [west, east, south, north],
+        ).fetchall()
+        return [
+            {"site_id": r[0], "latitude": r[1], "longitude": r[2], "azimuth": r[3], "technology": r[4], "coverage_radius_m": r[5]}
+            for r in rows
+            if r[4] is not None
+        ]
+    finally:
+        con.close()
+
+
+_SIGNAL_BANDS = {
+    "high": (-120.0, -100.0),   # -100 to -120 dBm
+    "mid": (-130.0, -121.0),    # -121 to -130 dBm
+    "low": (None, -130.0),      # weaker than -130 dBm
+}
+
+
+def coverage_holes_by_band(south: float, west: float, north: float, east: float, band: str) -> list[dict]:
+    """MR/Ookla coverage-hole points within the viewport, bucketed into
+    the three signal-strength bands requested for the map's Signal
+    layers. Empty whenever coverage_holes.parquet itself is empty —
+    no MR/Ookla input data exists in dataset_example, so this is wired
+    correctly but has nothing to show until real MR/Ookla source files
+    are ingested."""
+    if band not in _SIGNAL_BANDS:
+        raise InvalidMetricError(f"Unknown signal band '{band}', expected one of {list(_SIGNAL_BANDS)}")
+    holes_path = _parquet_path("coverage_holes")
+    if not holes_path.exists():
+        return []
+
+    lower, upper = _SIGNAL_BANDS[band]
+    con = get_connection()
+    try:
+        clauses = ["longitude BETWEEN ? AND ?", "latitude BETWEEN ? AND ?"]
+        params: list[float] = [west, east, south, north]
+        if lower is not None:
+            clauses.append("signal_strength >= ?")
+            params.append(lower)
+        if upper is not None:
+            clauses.append("signal_strength <= ?")
+            params.append(upper)
+        rows = con.execute(
+            f"""
+            SELECT latitude, longitude, signal_strength, serving_cell, data_source, cluster_id
+            FROM read_parquet('{holes_path}')
+            WHERE {' AND '.join(clauses)}
+            """,
+            params,
+        ).fetchall()
+        return [
+            {"latitude": r[0], "longitude": r[1], "signal_strength": r[2], "serving_cell": r[3], "data_source": r[4], "cluster_id": r[5]}
+            for r in rows
+        ]
+    finally:
+        con.close()
+
+
+def geoserver_layers() -> list[dict]:
+    """Lists whatever layers are actually published on the GeoServer
+    instance via WMS GetCapabilities, rather than hardcoding layer
+    names — the legacy app never wired GeoServer up at all (only unused
+    .sld style files existed, never referenced by any route), so there
+    is no fixed legacy layer list to port. Returns an empty list (not
+    an error) if GeoServer isn't reachable, since the map should still
+    work without it."""
+    url = f"{settings.geoserver_url}/wms"
+    try:
+        resp = httpx.get(url, params={"service": "WMS", "request": "GetCapabilities", "version": "1.3.0"}, timeout=3.0)
+        resp.raise_for_status()
+    except httpx.HTTPError:
+        return []
+
+    try:
+        root = ElementTree.fromstring(resp.text)
+    except ElementTree.ParseError:
+        return []
+
+    ns = {"wms": "http://www.opengis.net/wms"}
+    layers = []
+    for layer_el in root.findall(".//wms:Layer[wms:Name]", ns):
+        name_el = layer_el.find("wms:Name", ns)
+        title_el = layer_el.find("wms:Title", ns)
+        if name_el is not None and name_el.text:
+            layers.append({"name": name_el.text, "title": title_el.text if title_el is not None else name_el.text})
+    return layers
 
 
 def overview_stats() -> dict:

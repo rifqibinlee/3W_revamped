@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     duckdb_path: str = "./data/analytics.duckdb"
     parquet_dir: str = "./data/parquet"
     raw_data_dir: str = "./data/raw"
+    geoserver_url: str = "http://localhost:8600/geoserver"
 
     # Vite picks a free port if its default is taken, so this covers the
     # common local-dev range rather than hardcoding one port.

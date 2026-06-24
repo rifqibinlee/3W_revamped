@@ -211,6 +211,29 @@ export interface MapStats {
   total_capex: number
 }
 
+export interface SiteCoverageRow {
+  site_id: string
+  latitude: number
+  longitude: number
+  azimuth: number
+  technology: '2G' | '3G' | '4G' | '5G'
+  coverage_radius_m: number
+}
+
+export interface CoverageHolePoint {
+  latitude: number
+  longitude: number
+  signal_strength: number | null
+  serving_cell: string | null
+  data_source: string
+  cluster_id: number
+}
+
+export interface GeoserverLayer {
+  name: string
+  title: string
+}
+
 export interface WorstCongestedSector {
   zoom_sector_id: string
   region: string
@@ -333,6 +356,24 @@ export const api = {
   },
 
   overviewStats: () => request<OverviewStats>('/analytics/overview-stats'),
+
+  siteCoverage: (bounds: MapBounds) => {
+    const params = new URLSearchParams({
+      south: String(bounds.south), west: String(bounds.west),
+      north: String(bounds.north), east: String(bounds.east),
+    })
+    return request<SiteCoverageRow[]>(`/analytics/site-coverage?${params}`)
+  },
+
+  coverageHolesByBand: (bounds: MapBounds, band: 'high' | 'mid' | 'low') => {
+    const params = new URLSearchParams({
+      south: String(bounds.south), west: String(bounds.west),
+      north: String(bounds.north), east: String(bounds.east), band,
+    })
+    return request<CoverageHolePoint[]>(`/analytics/coverage-holes-by-band?${params}`)
+  },
+
+  geoserverLayers: () => request<GeoserverLayer[]>('/analytics/geoserver-layers'),
 
   siteForecast: (siteId: string, metric: string, horizonWeeks: number) =>
     request<SiteForecastSeries>(

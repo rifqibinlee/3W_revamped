@@ -100,3 +100,24 @@ def test_site_forecast_endpoint_rejects_invalid_metric(client) -> None:
 def test_site_forecast_endpoint_rejects_invalid_horizon(client) -> None:
     resp = client.get("/analytics/site-forecast/SITE001?horizon_weeks=0")
     assert resp.status_code == 422
+
+
+def test_site_coverage_endpoint_with_no_data(client) -> None:
+    resp = client.get("/analytics/site-coverage", params={"south": 0, "west": 100, "north": 10, "east": 110})
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_coverage_holes_by_band_endpoint_rejects_unknown_band(client) -> None:
+    resp = client.get(
+        "/analytics/coverage-holes-by-band",
+        params={"south": 0, "west": 100, "north": 10, "east": 110, "band": "extreme"},
+    )
+    assert resp.status_code == 400
+
+
+def test_geoserver_layers_endpoint_returns_empty_when_unreachable(client, monkeypatch) -> None:
+    monkeypatch.setattr("app.analytics.service.settings.geoserver_url", "http://localhost:1")
+    resp = client.get("/analytics/geoserver-layers")
+    assert resp.status_code == 200
+    assert resp.json() == []

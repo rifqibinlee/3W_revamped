@@ -487,3 +487,69 @@ def test_site_forecast_clamps_percentage_metric_to_100(tmp_path, monkeypatch) ->
     for point in result["forecast"]:
         assert point["value"] <= 100.0
         assert point["ci_upper"] <= 100.0
+
+
+def test_site_coverage_returns_empty_when_no_files(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    assert service.site_coverage(0, 100, 10, 110) == []
+
+
+def test_site_coverage_joins_params_with_coordinates_and_buckets_technology(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_parquet(
+        tmp_path / "site_coordinates.parquet",
+        [("SITE001", "Central", "C1", 3.10, 101.60), ("SITE002", "Central", "C1", 3.20, 101.70)],
+        ("site_id", "region", "cluster", "latitude", "longitude"),
+    )
+    _write_parquet(
+        tmp_path / "site_coverage_params.parquet",
+        [
+            ("SITE001", "SITE001-A", 10.0, "2G", 70.0, 0.0, 0.0, None, 500.0),
+            ("SITE001", "SITE001-B", 130.0, "L18", 70.0, 0.0, 0.0, None, 1000.0),
+            ("SITE002", "SITE002-A", 200.0, "7", 70.0, 0.0, 0.0, None, 800.0),  # unclassifiable code, dropped
+        ],
+        ("site_id", "cell_name", "azimuth", "technology", "antenna_height", "m_tilt", "e_tilt", "remark", "coverage_radius_m"),
+    )
+
+    rows = service.site_coverage(0, 100, 10, 110)
+    assert len(rows) == 2  # SITE002's unclassifiable '7' code is dropped
+    by_tech = {r["technology"]: r for r in rows}
+    assert by_tech["2G"]["site_id"] == "SITE001"
+    assert float(by_tech["2G"]["latitude"]) == 3.10
+    assert by_tech["2G"]["azimuth"] == 10.0
+    assert by_tech["4G"]["site_id"] == "SITE001"
+
+
+def test_coverage_holes_by_band_filters_by_signal_strength(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_parquet(
+        tmp_path / "coverage_holes.parquet",
+        [
+            (3.10, 101.60, -105.0, "CELL_A", "Ookla", 0),
+            (3.11, 101.61, -125.0, "CELL_B", "MR", 1),
+            (3.12, 101.62, -135.0, "CELL_C", "MR", 2),
+        ],
+        ("latitude", "longitude", "signal_strength", "serving_cell", "data_source", "cluster_id"),
+    )
+
+    high = service.coverage_holes_by_band(0, 100, 10, 110, "high")
+    mid = service.coverage_holes_by_band(0, 100, 10, 110, "mid")
+    low = service.coverage_holes_by_band(0, 100, 10, 110, "low")
+
+    assert [r["serving_cell"] for r in high] == ["CELL_A"]
+    assert [r["serving_cell"] for r in mid] == ["CELL_B"]
+    assert [r["serving_cell"] for r in low] == ["CELL_C"]
+
+
+def test_coverage_holes_by_band_rejects_unknown_band(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    try:
+        service.coverage_holes_by_band(0, 100, 10, 110, "extreme")
+        assert False, "expected InvalidMetricError"
+    except service.InvalidMetricError:
+        pass
+
+
+def test_geoserver_layers_returns_empty_when_unreachable(monkeypatch) -> None:
+    monkeypatch.setattr("app.analytics.service.settings.geoserver_url", "http://localhost:1")
+    assert service.geoserver_layers() == []
