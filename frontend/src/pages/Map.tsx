@@ -1174,7 +1174,7 @@ export function MapPage() {
 
   return (
     <div className="space-y-4">
-      <GlassPanel className="flex flex-wrap items-end gap-3">
+      <GlassPanel className="relative z-30 flex flex-wrap items-end gap-3">
         <div>
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">View</p>
           <button
@@ -1223,10 +1223,13 @@ export function MapPage() {
 
         {!splitActive && (
           <>
-            <div className="relative">
+            <div className="relative z-30">
               <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">Draw</p>
               <button
-                onClick={() => setDrawMenuOpen((v) => !v)}
+                onClick={() => {
+                  setDrawMenuOpen((v) => !v)
+                  setToolsMenuOpen(false)
+                }}
                 title="Draw an annotation"
                 className={`flex h-9 w-9 items-center justify-center rounded-xl ${
                   tool !== 'none' ? 'bg-sky-400 text-ink-900' : 'border border-white/20 text-white/80'
@@ -1238,7 +1241,7 @@ export function MapPage() {
               </button>
 
               {drawMenuOpen && (
-                <div className="absolute left-0 top-full z-20 mt-2 flex gap-1.5 rounded-2xl border border-white/15 bg-ink-900/95 p-2 backdrop-blur-xl">
+                <div className="absolute left-0 top-full z-30 mt-2 flex gap-1.5 rounded-2xl border border-white/15 bg-ink-900/95 p-2 backdrop-blur-xl">
                   {DRAW_TOOLS.map(({ tool: t, label, icon }) => (
                     <button
                       key={t}
@@ -1311,10 +1314,13 @@ export function MapPage() {
               </div>
             )}
 
-            <div className="relative">
+            <div className="relative z-30">
               <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">Tools</p>
               <button
-                onClick={() => setToolsMenuOpen((v) => !v)}
+                onClick={() => {
+                  setToolsMenuOpen((v) => !v)
+                  setDrawMenuOpen(false)
+                }}
                 title="Site planning tools"
                 className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 text-white/80"
               >
@@ -1323,7 +1329,7 @@ export function MapPage() {
                 </svg>
               </button>
               {toolsMenuOpen && (
-                <div className="absolute left-0 top-full z-20 mt-2 w-44 rounded-2xl border border-white/15 bg-ink-900/95 p-2 text-xs backdrop-blur-xl">
+                <div className="absolute left-0 top-full z-30 mt-2 w-44 rounded-2xl border border-white/15 bg-ink-900/95 p-2 text-xs backdrop-blur-xl">
                   {([
                     ['genset', 'Genset routing'],
                     ['cctv', 'CCTV planning'],
