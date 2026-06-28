@@ -3,6 +3,15 @@ import { GlassPanel } from '../components/GlassPanel'
 import { api, ApiError, type ConversationOut, type MessageOut, type UserOut } from '../lib/api'
 import { useAuth } from '../lib/useAuth'
 
+// A small curated set rather than a full emoji-mart-style library —
+// enough common reactions/expressions for a work chat without a new
+// dependency.
+const EMOJIS = [
+  '😀', '😂', '😅', '😉', '😊', '😍', '🤔', '😎', '😴', '😢',
+  '😡', '👍', '👎', '🙏', '👏', '🎉', '🔥', '✅', '❌', '⚠️',
+  '📍', '📡', '🔧', '🚀', '💡', '☕', '👀', '💯', '🙌', '😬',
+]
+
 export function Chat() {
   const { user } = useAuth()
   const [conversations, setConversations] = useState<ConversationOut[]>([])
@@ -11,7 +20,12 @@ export function Chat() {
   const [messages, setMessages] = useState<MessageOut[]>([])
   const [body, setBody] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [newRecipientId, setNewRecipientId] = useState('')
+
+  const [recipientQuery, setRecipientQuery] = useState('')
+  const [recipientSuggestionsOpen, setRecipientSuggestionsOpen] = useState(false)
+  const [selectedRecipients, setSelectedRecipients] = useState<UserOut[]>([])
+  const [groupTitle, setGroupTitle] = useState('')
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -50,12 +64,40 @@ export function Chat() {
     return otherId ? userLabel(otherId) : 'Conversation'
   }
 
+  const recipientMatches =
+    recipientQuery.trim().length === 0
+      ? []
+      : users.filter(
+          (u) =>
+            u.id !== user?.id &&
+            !selectedRecipients.some((r) => r.id === u.id) &&
+            u.username.toLowerCase().includes(recipientQuery.trim().toLowerCase()),
+        )
+
+  function addRecipient(u: UserOut) {
+    setSelectedRecipients((prev) => [...prev, u])
+    setRecipientQuery('')
+    setRecipientSuggestionsOpen(false)
+  }
+
+  function removeRecipient(id: string) {
+    setSelectedRecipients((prev) => prev.filter((u) => u.id !== id))
+  }
+
   async function handleStartConversation(e: FormEvent) {
     e.preventDefault()
-    if (!newRecipientId) return
+    if (selectedRecipients.length === 0) return
     try {
-      const conv = await api.createDirectConversation(newRecipientId)
-      setNewRecipientId('')
+      const conv =
+        selectedRecipients.length === 1
+          ? await api.createDirectConversation(selectedRecipients[0].id)
+          : await api.createGroupConversation(
+              groupTitle.trim() || selectedRecipients.map((u) => u.username).join(', '),
+              selectedRecipients.map((u) => u.id),
+            )
+      setSelectedRecipients([])
+      setGroupTitle('')
+      setRecipientQuery('')
       loadConversations()
       setSelectedId(conv.id)
     } catch (err) {
@@ -90,24 +132,63 @@ export function Chat() {
     <div className="grid h-[75vh] gap-4 md:grid-cols-[260px_1fr]">
       <GlassPanel className="flex flex-col overflow-hidden">
         <p className="mb-3 font-display text-sm font-semibold">Conversations</p>
-        <form onSubmit={handleStartConversation} className="mb-3 flex gap-1.5">
-          <select
-            value={newRecipientId}
-            onChange={(e) => setNewRecipientId(e.target.value)}
-            className="min-w-0 flex-1 rounded-lg border border-white/15 bg-white/5 px-2 py-1.5 text-xs focus:border-sky-400/60 focus:outline-none"
-          >
-            <option value="" className="bg-ink-900">
-              New chat with…
-            </option>
-            {users.filter((u) => u.id !== user?.id).map((u) => (
-              <option key={u.id} value={u.id} className="bg-ink-900">
-                {u.username}
-              </option>
-            ))}
-          </select>
-          <button type="submit" className="rounded-lg bg-gradient-to-r from-accent-400 to-accent-500 px-3 py-1.5 text-xs font-semibold text-ink-900">
-            Go
-          </button>
+        <form onSubmit={handleStartConversation} className="mb-3 space-y-1.5">
+          {selectedRecipients.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {selectedRecipients.map((u) => (
+                <span key={u.id} className="flex items-center gap-1 rounded-full bg-sky-400/15 px-2 py-0.5 text-[11px] text-sky-200">
+                  {u.username}
+                  <button type="button" onClick={() => removeRecipient(u.id)} className="text-sky-200/60 hover:text-white">
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          {selectedRecipients.length > 1 && (
+            <input
+              type="text"
+              value={groupTitle}
+              onChange={(e) => setGroupTitle(e.target.value)}
+              placeholder="Group name (optional)"
+              className="w-full rounded-lg border border-white/15 bg-white/5 px-2 py-1.5 text-xs placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
+            />
+          )}
+          <div className="relative flex gap-1.5">
+            <input
+              type="text"
+              value={recipientQuery}
+              onChange={(e) => {
+                setRecipientQuery(e.target.value)
+                setRecipientSuggestionsOpen(true)
+              }}
+              onFocus={() => setRecipientSuggestionsOpen(true)}
+              onBlur={() => setTimeout(() => setRecipientSuggestionsOpen(false), 150)}
+              placeholder={selectedRecipients.length === 0 ? 'New chat with…' : 'Add another person…'}
+              className="min-w-0 flex-1 rounded-lg border border-white/15 bg-white/5 px-2 py-1.5 text-xs placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
+            />
+            <button
+              type="submit"
+              disabled={selectedRecipients.length === 0}
+              className="rounded-lg bg-gradient-to-r from-accent-400 to-accent-500 px-3 py-1.5 text-xs font-semibold text-ink-900 disabled:opacity-40"
+            >
+              Go
+            </button>
+            {recipientSuggestionsOpen && recipientMatches.length > 0 && (
+              <div className="absolute left-0 top-full z-10 mt-1 w-full overflow-hidden rounded-lg border border-white/15 bg-ink-900/95 text-xs backdrop-blur-xl">
+                {recipientMatches.slice(0, 6).map((u) => (
+                  <button
+                    key={u.id}
+                    type="button"
+                    onClick={() => addRecipient(u)}
+                    className="block w-full px-2.5 py-1.5 text-left text-white/80 hover:bg-white/10"
+                  >
+                    {u.username}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </form>
 
         <div className="flex-1 space-y-1 overflow-y-auto">
@@ -164,7 +245,34 @@ export function Chat() {
               })}
               <div ref={messagesEndRef} />
             </div>
-            <form onSubmit={handleSend} className="mt-3 flex gap-2">
+            <form onSubmit={handleSend} className="relative mt-3 flex gap-2">
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setEmojiPickerOpen((v) => !v)}
+                  title="Add emoji"
+                  className="flex h-full items-center justify-center rounded-xl border border-white/15 px-2.5 text-base text-white/70 hover:bg-white/5"
+                >
+                  🙂
+                </button>
+                {emojiPickerOpen && (
+                  <div className="absolute bottom-full left-0 z-10 mb-2 grid w-56 grid-cols-6 gap-1 rounded-2xl border border-white/15 bg-ink-900/95 p-2 backdrop-blur-xl">
+                    {EMOJIS.map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        onClick={() => {
+                          setBody((prev) => prev + emoji)
+                          setEmojiPickerOpen(false)
+                        }}
+                        className="rounded-lg p-1 text-lg hover:bg-white/10"
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <input
                 type="text"
                 value={body}
