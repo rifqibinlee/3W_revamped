@@ -290,8 +290,8 @@ export function MapPage() {
   const [legendsOpen, setLegendsOpen] = useState(true)
 
   const LAYER_LEGEND_ITEMS = [
-    ['healthySites', 'Healthy sites', <span key="sw" className="h-2.5 w-2.5 rounded-full bg-[#3b82f6]" />],
-    ['congestedSites', 'Congested sites', <span key="sw" className="h-2.5 w-2.5 rounded-full bg-[#dc2626]" />],
+    ['healthySites', 'Healthy sites', <span key="sw" className="h-2.5 w-2.5 rounded-full border-2 border-[#60a5fa] bg-white/15" />],
+    ['congestedSites', 'Congested sites', <span key="sw" className="h-2.5 w-2.5 rounded-full border-2 border-[#f87171] bg-white/15" />],
     ['heatmap', 'Heatmap (congested)', <span key="sw" className="h-2.5 w-5 rounded-sm" style={{ background: 'linear-gradient(90deg,#1d4ed8,#22d3ee,#facc15,#fb923c,#dc2626)' }} />],
     ['coverage5g', '5G coverage', <span key="sw" className="h-2.5 w-2.5 rounded-full" style={{ background: TECH_COLORS['5G'] }} />],
     ['coverage4g', '4G coverage', <span key="sw" className="h-2.5 w-2.5 rounded-full" style={{ background: TECH_COLORS['4G'] }} />],
@@ -1583,7 +1583,7 @@ export function MapPage() {
         {status && <p className="text-sm text-white/70">{status}</p>}
       </GlassPanel>
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
+      <div className={`grid gap-4 ${splitActive ? '' : 'lg:grid-cols-[1fr_280px]'}`}>
         {!splitActive && (
           <div className="relative h-[55vh] w-full">
             <div ref={containerRef} className="h-full w-full overflow-hidden rounded-3xl border border-white/15" />
@@ -1594,7 +1594,7 @@ export function MapPage() {
               <button
                 onClick={() => setLayersOpen((v) => !v)}
                 title="Layers"
-                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 bg-ink-900/90 text-white/80 backdrop-blur-sm"
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 bg-ink-950 text-white/80"
               >
                 <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
@@ -1602,7 +1602,7 @@ export function MapPage() {
               </button>
 
               {layersOpen && (
-                <div className="mt-2 max-h-[48vh] w-64 overflow-y-auto rounded-2xl border border-white/15 bg-ink-900/95 p-3 text-xs text-white/85 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.6)] backdrop-blur-xl">
+                <div className="mt-2 max-h-[48vh] w-64 overflow-y-auto rounded-2xl border border-white/20 bg-ink-950 p-3 text-xs text-white/85 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.8)]">
                   <div className="mb-2 flex items-center justify-between">
                     <p className="font-display text-sm font-semibold text-white">Layers</p>
                     <button onClick={() => setLayersOpen(false)} className="text-white/40 hover:text-white">
@@ -1664,7 +1664,7 @@ export function MapPage() {
                 collapsible, open by default. */}
             <div className="absolute bottom-3 left-3 z-10">
               {legendsOpen && (
-                <div className="mb-2 max-h-[40vh] w-56 overflow-y-auto rounded-2xl border border-white/15 bg-ink-900/95 p-3 text-xs text-white/85 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.6)] backdrop-blur-xl">
+                <div className="mb-2 max-h-[40vh] w-56 overflow-y-auto rounded-2xl border border-white/20 bg-ink-950 p-3 text-xs text-white/85 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.8)]">
                   <div className="mb-2 flex items-center justify-between">
                     <p className="font-display text-sm font-semibold text-white">Legends</p>
                     <button onClick={() => setLegendsOpen(false)} className="text-white/40 hover:text-white">
@@ -1702,7 +1702,7 @@ export function MapPage() {
               <button
                 onClick={() => setLegendsOpen((v) => !v)}
                 title="Legends"
-                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 bg-ink-900/90 text-white/80 backdrop-blur-sm"
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 bg-ink-950 text-white/80"
               >
                 <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M4 6h16M4 12h10M4 18h7" />
@@ -1713,15 +1713,15 @@ export function MapPage() {
         )}
 
         {splitActive && (
-          <div className="grid h-[55vh] grid-cols-2 gap-2">
+          <div className="grid h-[70vh] grid-cols-1 gap-3 md:grid-cols-2">
             <div className="relative overflow-hidden rounded-3xl border border-white/15">
-              <div className="absolute left-2 top-2 z-10 rounded-lg bg-ink-900/80 px-2.5 py-1 text-xs font-semibold text-white/90">
+              <div className="absolute left-2 top-2 z-10 rounded-lg bg-ink-950 px-2.5 py-1 text-xs font-semibold text-white/90">
                 Current status
               </div>
               <div ref={splitLeftRef} className="h-full w-full" />
             </div>
             <div className="relative overflow-hidden rounded-3xl border border-white/15">
-              <div className="absolute left-2 top-2 z-10 rounded-lg bg-ink-900/80 px-2.5 py-1 text-xs font-semibold text-white/90">
+              <div className="absolute left-2 top-2 z-10 rounded-lg bg-ink-950 px-2.5 py-1 text-xs font-semibold text-white/90">
                 Forecast
               </div>
               <div ref={splitRightRef} className="h-full w-full" />

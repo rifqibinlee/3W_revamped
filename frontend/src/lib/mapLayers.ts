@@ -116,18 +116,24 @@ export function statusGeoJson(rows: CurrentStatusRow[]): FeatureCollection {
   }
 }
 
+// Drives the RING color (not the fill — the fill stays neutral glass
+// white) so the cluster reads as "frosted glass with a status ring"
+// rather than a flat colored blob, matching GlassPanel's actual look
+// (white/8 fill, white/20 border, soft shadow) instead of inventing a
+// different visual language just for clusters.
 const CONGESTED_RATIO_COLOR: maplibregl.ExpressionSpecification = [
   'interpolate', ['linear'], ['/', ['get', 'congestedSum'], ['get', 'point_count']],
-  0, '#3b82f6', 0.5, '#a855f7', 1, '#dc2626',
+  0, '#60a5fa', 0.5, '#c084fc', 1, '#f87171',
 ]
 
 // Healthy and congested sites cluster together in one group (separate
-// groups used to overlap and visually compete at the same spot) — the
-// cluster bubble's color is a blue→red gradient driven by what
-// fraction of the cluster is congested, via clusterProperties summing
-// a 0/1 "congested" flag during clustering. The "glassy" look is two
-// circle layers: a soft blurred halo underneath, a crisper translucent
-// disc with a white rim on top.
+// groups used to overlap and visually compete at the same spot). The
+// glass look is three circle layers per cluster: a soft white glow
+// underneath (stands in for GlassPanel's drop shadow), a translucent
+// white glass disc, and a colored ring on top whose color reflects
+// what fraction of the cluster is congested (via clusterProperties
+// summing a 0/1 flag during clustering) — status lives in the ring,
+// not the fill, so the glass stays glass.
 export function addStatusLayer(map: maplibregl.Map, sourceId: string, rows: CurrentStatusRow[], onSiteClick?: (siteId: string) => void) {
   const data = statusGeoJson(rows)
 
@@ -148,9 +154,9 @@ export function addStatusLayer(map: maplibregl.Map, sourceId: string, rows: Curr
     source: sourceId,
     filter: ['has', 'point_count'],
     paint: {
-      'circle-radius': ['step', ['get', 'point_count'], 24, 25, 30, 100, 38],
-      'circle-color': CONGESTED_RATIO_COLOR,
-      'circle-opacity': 0.35,
+      'circle-radius': ['step', ['get', 'point_count'], 22, 25, 28, 100, 36],
+      'circle-color': '#ffffff',
+      'circle-opacity': 0.18,
       'circle-blur': 1,
     },
   })
@@ -161,10 +167,11 @@ export function addStatusLayer(map: maplibregl.Map, sourceId: string, rows: Curr
     filter: ['has', 'point_count'],
     paint: {
       'circle-radius': ['step', ['get', 'point_count'], 16, 25, 20, 100, 26],
-      'circle-color': CONGESTED_RATIO_COLOR,
-      'circle-opacity': 0.55,
-      'circle-stroke-width': 1.5,
-      'circle-stroke-color': 'rgba(255,255,255,0.75)',
+      'circle-color': '#ffffff',
+      'circle-opacity': 0.14,
+      'circle-stroke-width': 2,
+      'circle-stroke-color': CONGESTED_RATIO_COLOR,
+      'circle-stroke-opacity': 0.9,
     },
   })
   map.addLayer({
@@ -173,7 +180,7 @@ export function addStatusLayer(map: maplibregl.Map, sourceId: string, rows: Curr
     source: sourceId,
     filter: ['has', 'point_count'],
     layout: { 'text-field': '{point_count_abbreviated}', 'text-size': 12, 'text-font': ['Open Sans Bold'] },
-    paint: { 'text-color': '#ffffff' },
+    paint: { 'text-color': '#ffffff', 'text-halo-color': 'rgba(15,15,30,0.6)', 'text-halo-width': 1 },
   })
   map.addLayer({
     id: `${sourceId}-point`,
@@ -182,10 +189,11 @@ export function addStatusLayer(map: maplibregl.Map, sourceId: string, rows: Curr
     filter: ['!', ['has', 'point_count']],
     paint: {
       'circle-radius': 6,
-      'circle-color': ['case', ['get', 'congested'], '#dc2626', '#3b82f6'],
-      'circle-opacity': 0.7,
-      'circle-stroke-width': 1.5,
-      'circle-stroke-color': 'rgba(255,255,255,0.75)',
+      'circle-color': '#ffffff',
+      'circle-opacity': 0.18,
+      'circle-stroke-width': 2,
+      'circle-stroke-color': ['case', ['get', 'congested'], '#f87171', '#60a5fa'],
+      'circle-stroke-opacity': 0.95,
     },
   })
 
