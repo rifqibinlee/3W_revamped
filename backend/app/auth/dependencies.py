@@ -26,9 +26,18 @@ def get_current_user(token: str | None = Depends(oauth2_scheme), db: Session = D
 
 
 def require_roles(*allowed: Role) -> Callable[..., User]:
+    """Super Admin always passes, regardless of which roles a given route
+    actually lists — it's the one role meant to see/manage everything on
+    the platform, not just whatever a route happened to gate to Admin."""
     def _check(user: User = Depends(get_current_user)) -> User:
-        if user.role not in allowed:
+        if user.role != Role.SUPER_ADMIN and user.role not in allowed:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permissions")
         return user
 
     return _check
+
+
+def require_super_admin(user: User = Depends(get_current_user)) -> User:
+    if user.role != Role.SUPER_ADMIN:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Super Admin only")
+    return user

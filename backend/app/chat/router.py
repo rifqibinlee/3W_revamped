@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, require_super_admin
 from app.auth.models import User
 from app.chat import service
 from app.chat.models import Conversation, Message
@@ -55,6 +55,15 @@ def list_messages(conversation_id: str, user: User = Depends(get_current_user), 
 @router.post("/messages/{message_id}/read", status_code=status.HTTP_204_NO_CONTENT)
 def mark_read(message_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
     service.mark_read(db, message_id, user.id)
+
+
+@router.delete("/messages/{message_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_message(message_id: str, user: User = Depends(require_super_admin), db: Session = Depends(get_db)) -> None:
+    try:
+        message = service.get_message(db, message_id)
+    except service.MessageNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found") from exc
+    service.delete_message(db, message)
 
 
 @router.get("/conversations/{conversation_id}/unread-count")

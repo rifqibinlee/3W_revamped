@@ -76,6 +76,16 @@ export function Chat() {
     }
   }
 
+  async function handleDeleteMessage(messageId: string) {
+    if (!selectedId || !window.confirm('Delete this message?')) return
+    try {
+      await api.deleteMessage(messageId)
+      loadMessages(selectedId)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not delete message')
+    }
+  }
+
   return (
     <div className="grid h-[75vh] gap-4 md:grid-cols-[260px_1fr]">
       <GlassPanel className="flex flex-col overflow-hidden">
@@ -128,7 +138,18 @@ export function Chat() {
               {messages.map((m) => {
                 const mine = m.sender_id === user?.id
                 return (
-                  <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+                  <div key={m.id} className={`group flex items-center gap-1.5 ${mine ? 'justify-end' : 'justify-start'}`}>
+                    {user?.role === 'super_admin' && (
+                      <button
+                        onClick={() => handleDeleteMessage(m.id)}
+                        title="Delete message"
+                        className="hidden text-white/30 hover:text-red-300 group-hover:block"
+                      >
+                        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" />
+                        </svg>
+                      </button>
+                    )}
                     <div
                       className={`max-w-xs rounded-2xl px-3.5 py-2 text-sm ${
                         mine ? 'bg-gradient-to-r from-sky-400 to-sky-500 text-ink-900' : 'bg-white/10 text-white/90'

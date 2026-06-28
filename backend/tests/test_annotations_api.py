@@ -124,3 +124,59 @@ def test_comments_listed_in_order_via_api(client) -> None:
     resp = client.get(f"/projects/{project_id}/comments")
     assert resp.status_code == 200
     assert [c["body"] for c in resp.json()] == ["first", "second"]
+
+
+def _register_and_login_super_admin(client, username):
+    client.post(
+        "/auth/register",
+        json={"username": username, "email": f"{username}@example.com", "password": "password123", "role": "super_admin"},
+    )
+    resp = client.post("/auth/login", json={"username": username, "password": "password123"})
+    token = resp.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_non_super_admin_cannot_delete_annotation(client) -> None:
+    headers = _register_and_login(client, "regular_user_del")
+    project_id = client.post("/projects", json={"title": "Note"}, headers=headers).json()["id"]
+    annotation_id = client.post(
+        f"/projects/{project_id}/annotations",
+        json={"geometry": {"type": "Point", "coordinates": [101.5, 3.1]}, "label": "pole"},
+        headers=headers,
+    ).json()["id"]
+
+    resp = client.delete(f"/annotations/{annotation_id}", headers=headers)
+    assert resp.status_code == 403
+
+
+def test_super_admin_can_delete_annotation(client) -> None:
+    headers = _register_and_login(client, "regular_user_del2")
+    admin_headers = _register_and_login_super_admin(client, "super_del")
+    project_id = client.post("/projects", json={"title": "Note"}, headers=headers).json()["id"]
+    annotation_id = client.post(
+        f"/projects/{project_id}/annotations",
+        json={"geometry": {"type": "Point", "coordinates": [101.5, 3.1]}, "label": "pole"},
+        headers=headers,
+    ).json()["id"]
+
+    resp = client.delete(f"/annotations/{annotation_id}", headers=admin_headers)
+    assert resp.status_code == 204
+    assert client.get(f"/projects/{project_id}/annotations").json() == []
+
+
+def test_super_admin_can_delete_project_with_tasks(client) -> None:
+    headers = _register_and_login(client, "assignee_del")
+    admin_headers = _register_and_login_super_admin(client, "super_del2")
+    project_id = client.post(
+        "/projects", json={"title": "Project to delete", "assignee_id": headers and client.get("/auth/me", headers=headers).json()["id"]},
+        headers=headers,
+    ).json()["id"]
+    client.post(
+        f"/projects/{project_id}/tasks",
+        json={"title": "Task", "assignee_ids": [client.get("/auth/me", headers=headers).json()["id"]], "due_date": "2030-01-01T00:00:00Z"},
+        headers=headers,
+    )
+
+    resp = client.delete(f"/projects/{project_id}", headers=admin_headers)
+    assert resp.status_code == 204
+    assert client.get(f"/projects/{project_id}").status_code == 404

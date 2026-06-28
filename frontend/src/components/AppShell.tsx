@@ -15,11 +15,16 @@ const NAV_ITEMS = [
 ]
 
 const ADMIN_NAV_ITEMS = [{ to: '/data', label: 'Data' }]
+const SUPER_ADMIN_NAV_ITEMS = [{ to: '/admin', label: 'Super Admin' }]
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth()
   const initials = user?.username.slice(0, 2).toUpperCase() ?? '--'
-  const navItems = user?.role === 'admin' ? [...NAV_ITEMS, ...ADMIN_NAV_ITEMS] : NAV_ITEMS
+  const navItems = [
+    ...NAV_ITEMS,
+    ...(user?.role === 'admin' || user?.role === 'super_admin' ? ADMIN_NAV_ITEMS : []),
+    ...(user?.role === 'super_admin' ? SUPER_ADMIN_NAV_ITEMS : []),
+  ]
 
   return (
     <div className="relative min-h-screen pb-9">

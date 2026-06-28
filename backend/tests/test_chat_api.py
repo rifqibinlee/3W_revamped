@@ -57,3 +57,37 @@ def test_list_conversations_via_api(client) -> None:
 
     eve_resp = client.get("/chat/conversations", headers=eve_headers)
     assert eve_resp.json() == []
+
+
+def _register_and_login_super_admin(client, username):
+    client.post(
+        "/auth/register",
+        json={"username": username, "email": f"{username}@example.com", "password": "password123", "role": "super_admin"},
+    )
+    resp = client.post("/auth/login", json={"username": username, "password": "password123"})
+    token = resp.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_non_super_admin_cannot_delete_message(client) -> None:
+    alice_headers = _register_and_login(client, "alice_del_msg")
+    bob_headers = _register_and_login(client, "bob_del_msg")
+    bob_id = client.get("/auth/me", headers=bob_headers).json()["id"]
+    conv_id = client.post("/chat/conversations/direct", json={"other_user_id": bob_id}, headers=alice_headers).json()["id"]
+    message_id = client.post(f"/chat/conversations/{conv_id}/messages", json={"body": "hi"}, headers=alice_headers).json()["id"]
+
+    resp = client.delete(f"/chat/messages/{message_id}", headers=alice_headers)
+    assert resp.status_code == 403
+
+
+def test_super_admin_can_delete_message(client) -> None:
+    alice_headers = _register_and_login(client, "alice_del_msg2")
+    bob_headers = _register_and_login(client, "bob_del_msg2")
+    admin_headers = _register_and_login_super_admin(client, "super_del_msg")
+    bob_id = client.get("/auth/me", headers=bob_headers).json()["id"]
+    conv_id = client.post("/chat/conversations/direct", json={"other_user_id": bob_id}, headers=alice_headers).json()["id"]
+    message_id = client.post(f"/chat/conversations/{conv_id}/messages", json={"body": "hi"}, headers=alice_headers).json()["id"]
+
+    resp = client.delete(f"/chat/messages/{message_id}", headers=admin_headers)
+    assert resp.status_code == 204
+    assert client.get(f"/chat/conversations/{conv_id}/messages", headers=alice_headers).json() == []

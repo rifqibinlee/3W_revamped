@@ -10,6 +10,7 @@ import { MapPage } from './pages/Map'
 import { Notes } from './pages/Notes'
 import { Pricing } from './pages/Pricing'
 import { Projects } from './pages/Projects'
+import { SuperAdmin } from './pages/SuperAdmin'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
@@ -22,7 +23,15 @@ function AdminRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   if (loading) return null
   if (!user) return <Navigate to="/login" replace />
-  if (user.role !== 'admin') return <Navigate to="/" replace />
+  if (user.role !== 'admin' && user.role !== 'super_admin') return <Navigate to="/" replace />
+  return <AppShell>{children}</AppShell>
+}
+
+function SuperAdminRoute({ children }: { children: ReactNode }) {
+  const { user, loading } = useAuth()
+  if (loading) return null
+  if (!user) return <Navigate to="/login" replace />
+  if (user.role !== 'super_admin') return <Navigate to="/" replace />
   return <AppShell>{children}</AppShell>
 }
 
@@ -84,6 +93,14 @@ export default function App() {
           <AdminRoute>
             <DataManagement />
           </AdminRoute>
+        }
+      />
+      <Route
+        path="/admin"
+        element={
+          <SuperAdminRoute>
+            <SuperAdmin />
+          </SuperAdminRoute>
         }
       />
     </Routes>

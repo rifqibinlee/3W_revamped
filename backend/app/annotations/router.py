@@ -15,7 +15,7 @@ from app.annotations.schemas import (
     TaskCreate,
     TaskOut,
 )
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, require_super_admin
 from app.auth.models import User
 from app.core.db import get_db
 
@@ -77,6 +77,21 @@ def add_annotation(project_id: str, payload: AnnotationCreate, user: User = Depe
 @router.get("/projects/{project_id}/annotations", response_model=list[AnnotationOut])
 def list_annotations(project_id: str, db: Session = Depends(get_db)) -> list[Annotation]:
     return service.list_annotations(db, project_id)
+
+
+@router.delete("/annotations/{annotation_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_annotation(annotation_id: str, user: User = Depends(require_super_admin), db: Session = Depends(get_db)) -> None:
+    try:
+        annotation = service.get_annotation(db, annotation_id)
+    except service.NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Annotation not found") from exc
+    service.delete_annotation(db, annotation)
+
+
+@router.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_project_route(project_id: str, user: User = Depends(require_super_admin), db: Session = Depends(get_db)) -> None:
+    project = _get_project_or_404(db, project_id)
+    service.delete_project(db, project)
 
 
 @router.post("/projects/{project_id}/tasks", response_model=TaskOut, status_code=status.HTTP_201_CREATED)

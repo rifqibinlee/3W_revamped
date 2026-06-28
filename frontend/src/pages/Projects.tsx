@@ -185,6 +185,17 @@ export function Projects() {
     }
   }
 
+  async function handleDeleteProject(projectId: string, title: string) {
+    if (!window.confirm(`Delete project "${title}"? This also deletes its annotations, tasks, and comments.`)) return
+    try {
+      await api.deleteProject(projectId)
+      setSelectedId(null)
+      load()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not delete project')
+    }
+  }
+
   async function runTaskAction(action: () => Promise<TaskOut>) {
     try {
       await action()
@@ -314,8 +325,20 @@ export function Projects() {
 
         {selectedProject && (
           <GlassPanel>
-            <p className="font-display text-lg font-semibold">{selectedProject.title}</p>
-            <p className="text-xs text-white/55">Assigned to {userLabel(selectedProject.assignee_id ?? '')}</p>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-display text-lg font-semibold">{selectedProject.title}</p>
+                <p className="text-xs text-white/55">Assigned to {userLabel(selectedProject.assignee_id ?? '')}</p>
+              </div>
+              {user?.role === 'super_admin' && (
+                <button
+                  onClick={() => handleDeleteProject(selectedProject.id, selectedProject.title)}
+                  className="shrink-0 rounded-lg border border-red-400/30 px-2.5 py-1 text-xs font-semibold text-red-300 hover:bg-red-400/10"
+                >
+                  Delete project
+                </button>
+              )}
+            </div>
             <p className="mt-2 whitespace-pre-wrap text-sm text-white/75">
               {selectedProject.description || 'No description.'}
             </p>

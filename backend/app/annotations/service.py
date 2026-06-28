@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.annotations.models import Annotation, Project, ProjectComment, Task, TaskStatus
+from app.annotations.models import Annotation, Project, ProjectComment, Task, TaskStatus, task_assignees
 from app.auth.models import Role, User
 from app.chat import service as chat_service
 
@@ -43,6 +43,33 @@ def get_task(db: Session, task_id: str) -> Task:
     if task is None:
         raise NotFoundError(task_id)
     return task
+
+
+def get_annotation(db: Session, annotation_id: str) -> Annotation:
+    annotation = db.get(Annotation, annotation_id)
+    if annotation is None:
+        raise NotFoundError(annotation_id)
+    return annotation
+
+
+def delete_annotation(db: Session, annotation: Annotation) -> None:
+    db.delete(annotation)
+    db.commit()
+
+
+def delete_project(db: Session, project: Project) -> None:
+    """Super-Admin-only — deletes the project along with everything that
+    references it (annotations, tasks + their assignee links, comments),
+    since none of those are useful orphaned. task_assignees rows must go
+    before their tasks — the FK has no ON DELETE CASCADE."""
+    task_ids = [t.id for t in db.query(Task.id).filter(Task.project_id == project.id)]
+    if task_ids:
+        db.execute(task_assignees.delete().where(task_assignees.c.task_id.in_(task_ids)))
+    db.query(Annotation).filter(Annotation.project_id == project.id).delete()
+    db.query(Task).filter(Task.project_id == project.id).delete()
+    db.query(ProjectComment).filter(ProjectComment.project_id == project.id).delete()
+    db.delete(project)
+    db.commit()
 
 
 def create_project(

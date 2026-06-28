@@ -31,3 +31,17 @@ class UserOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class SetPasswordRequest(BaseModel):
+    new_password: str = Field(min_length=8)
+
+
+class LoginHistoryOut(BaseModel):
+    id: str
+    user_id: str
+    username: str
+    ip_address: str | None
+    logged_in_at: datetime
+
+    model_config = {"from_attributes": True}

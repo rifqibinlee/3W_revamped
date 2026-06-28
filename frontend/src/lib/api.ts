@@ -53,8 +53,16 @@ export interface UserOut {
   id: string
   username: string
   email: string
-  role: 'admin' | 'planner' | 'staff'
+  role: 'super_admin' | 'admin' | 'planner' | 'staff'
   created_at: string
+}
+
+export interface LoginHistoryEntry {
+  id: string
+  user_id: string
+  username: string
+  ip_address: string | null
+  logged_in_at: string
 }
 
 export interface TokenPair {
@@ -366,6 +374,19 @@ export const api = {
   me: () => request<UserOut>('/auth/me'),
 
   listUsers: () => request<UserOut[]>('/auth/users'),
+
+  setUserPassword: (userId: string, newPassword: string) =>
+    request<void>(`/auth/users/${userId}/password`, { method: 'PUT', body: JSON.stringify({ new_password: newPassword }) }),
+
+  deleteUser: (userId: string) => request<void>(`/auth/users/${userId}`, { method: 'DELETE' }),
+
+  loginHistory: () => request<LoginHistoryEntry[]>('/auth/login-history'),
+
+  deleteAnnotation: (annotationId: string) => request<void>(`/annotations/${annotationId}`, { method: 'DELETE' }),
+
+  deleteProject: (projectId: string) => request<void>(`/projects/${projectId}`, { method: 'DELETE' }),
+
+  deleteMessage: (messageId: string) => request<void>(`/chat/messages/${messageId}`, { method: 'DELETE' }),
 
   ganttRows: () => request<TaskOut[]>('/tasks/gantt/rows'),
 

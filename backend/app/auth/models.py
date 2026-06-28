@@ -9,6 +9,7 @@ from app.core.db import Base
 
 
 class Role(str, Enum):
+    SUPER_ADMIN = "super_admin"
     ADMIN = "admin"
     PLANNER = "planner"
     STAFF = "staff"

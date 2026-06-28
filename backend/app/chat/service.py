@@ -102,6 +102,23 @@ def send_message(db: Session, conversation_id: str, sender_id: str, body: str) -
     return message
 
 
+class MessageNotFoundError(Exception):
+    pass
+
+
+def get_message(db: Session, message_id: str) -> Message:
+    message = db.get(Message, message_id)
+    if message is None:
+        raise MessageNotFoundError(message_id)
+    return message
+
+
+def delete_message(db: Session, message: Message) -> None:
+    db.query(MessageRead).filter(MessageRead.message_id == message.id).delete()
+    db.delete(message)
+    db.commit()
+
+
 def list_messages(db: Session, conversation_id: str, user_id: str) -> list[Message]:
     _require_participant(db, conversation_id, user_id)
     stmt = (
