@@ -28,12 +28,18 @@ class UserOut(BaseModel):
     username: str
     email: str
     role: Role
+    avatar_url: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
 
 
 class SetPasswordRequest(BaseModel):
+    new_password: str = Field(min_length=8)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
     new_password: str = Field(min_length=8)
 
 

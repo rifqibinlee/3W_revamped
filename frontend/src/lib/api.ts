@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 
 export class ApiError extends Error {
   status: number
@@ -73,6 +73,7 @@ export interface UserOut {
   username: string
   email: string
   role: 'super_admin' | 'admin' | 'planner' | 'staff'
+  avatar_url: string | null
   created_at: string
 }
 
@@ -399,6 +400,14 @@ export const api = {
 
   setUserPassword: (userId: string, newPassword: string) =>
     request<void>(`/auth/users/${userId}/password`, { method: 'PUT', body: JSON.stringify({ new_password: newPassword }) }),
+
+  changeOwnPassword: (currentPassword: string, newPassword: string) =>
+    request<void>('/auth/me/password', {
+      method: 'PUT',
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    }),
+
+  uploadAvatar: (file: File) => uploadFile<UserOut>('/auth/me/avatar', file),
 
   deleteUser: (userId: string) => request<void>(`/auth/users/${userId}`, { method: 'DELETE' }),
 

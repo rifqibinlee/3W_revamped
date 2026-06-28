@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     duckdb_path: str = "./data/analytics.duckdb"
     parquet_dir: str = "./data/parquet"
     raw_data_dir: str = "./data/raw"
+    avatar_dir: str = "./data/avatars"
     geoserver_url: str = "http://localhost:8600/geoserver"
     # Fixed layer names the Genset/Bitcoin-mining map tools query for
     # substation/building candidates — placeholders until an admin

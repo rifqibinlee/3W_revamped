@@ -1,13 +1,28 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.auth import service
 from app.auth.dependencies import get_current_user, require_super_admin
 from app.auth.models import User
-from app.auth.schemas import LoginHistoryOut, LoginRequest, RegisterRequest, SetPasswordRequest, TokenPair, UserOut
+from app.auth.schemas import (
+    ChangePasswordRequest,
+    LoginHistoryOut,
+    LoginRequest,
+    RegisterRequest,
+    SetPasswordRequest,
+    TokenPair,
+    UserOut,
+)
+from app.core.config import settings
 from app.core.db import get_db
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+_ALLOWED_AVATAR_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
+_MAX_AVATAR_BYTES = 5 * 1024 * 1024
 
 
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
@@ -66,6 +81,40 @@ def delete_user(user_id: str, admin: User = Depends(require_super_admin), db: Se
             status.HTTP_409_CONFLICT,
             "This user has projects, annotations, messages, or comments — remove those first",
         ) from exc
+
+
+@router.put("/me/password", status_code=status.HTTP_204_NO_CONTENT)
+def change_own_password(
+    payload: ChangePasswordRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db),
+) -> None:
+    try:
+        service.change_own_password(db, user, payload.current_password, payload.new_password)
+    except service.WrongPasswordError as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Current password is incorrect") from exc
+
+
+@router.post("/me/avatar", response_model=UserOut)
+async def upload_avatar(
+    file: UploadFile, user: User = Depends(get_current_user), db: Session = Depends(get_db),
+) -> User:
+    ext = _ALLOWED_AVATAR_TYPES.get(file.content_type or "")
+    if ext is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Avatar must be a PNG, JPEG, or WebP image")
+
+    content = await file.read()
+    if len(content) > _MAX_AVATAR_BYTES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Avatar must be 5MB or smaller")
+
+    avatar_dir = Path(settings.avatar_dir)
+    avatar_dir.mkdir(parents=True, exist_ok=True)
+    # A fresh filename per upload, not a name keyed on the user id —
+    # browsers/CDNs cache aggressively by URL, so reusing the same
+    # filename on every re-upload would mean the old picture keeps
+    # showing until a hard refresh.
+    filename = f"{user.id}-{uuid.uuid4().hex[:8]}{ext}"
+    (avatar_dir / filename).write_bytes(content)
+
+    return service.set_avatar_url(db, user, f"/avatars/{filename}")
 
 
 @router.get("/login-history", response_model=list[LoginHistoryOut])

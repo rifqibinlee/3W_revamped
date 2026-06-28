@@ -99,3 +99,24 @@ def delete_user(db: Session, user: User) -> None:
 
 def list_login_history(db: Session) -> list[LoginHistory]:
     return list(db.scalars(select(LoginHistory).order_by(LoginHistory.logged_in_at.desc())))
+
+
+class WrongPasswordError(Exception):
+    pass
+
+
+def change_own_password(db: Session, user: User, current_password: str, new_password: str) -> None:
+    """Self-service change — requires the current password, unlike
+    Super Admin's set_password() which doesn't (the admin isn't the
+    account holder, so there's nothing to verify them against)."""
+    if not verify_password(current_password, user.password_hash):
+        raise WrongPasswordError()
+    user.password_hash = hash_password(new_password)
+    db.commit()
+
+
+def set_avatar_url(db: Session, user: User, avatar_url: str) -> User:
+    user.avatar_url = avatar_url
+    db.commit()
+    db.refresh(user)
+    return user

@@ -1,9 +1,11 @@
 import { useState, type ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
 import logo from '../assets/3w-logo.png'
+import { API_BASE_URL } from '../lib/api'
 import { useAuth } from '../lib/useAuth'
 import { AIPanel } from './AIPanel'
 import { AnimatedBackground } from './AnimatedBackground'
+import { ProfileSettings } from './ProfileSettings'
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard' },
@@ -20,6 +22,8 @@ const SUPER_ADMIN_NAV_ITEMS = [{ to: '/admin', label: 'Super Admin' }]
 export function AppShell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false)
+  const [profileSettingsOpen, setProfileSettingsOpen] = useState(false)
   const initials = user?.username.slice(0, 2).toUpperCase() ?? '--'
   const navItems = [
     ...NAV_ITEMS,
@@ -61,16 +65,40 @@ export function AppShell({ children }: { children: ReactNode }) {
                 {menuOpen ? <path d="M6 6l12 12M18 6 6 18" /> : <path d="M4 6h16M4 12h16M4 18h16" />}
               </svg>
             </button>
-            <button
-              type="button"
-              onClick={logout}
-              title="Sign out"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent-400 to-accent-500 font-display text-xs font-semibold text-ink-900"
-            >
-              {initials}
-            </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setProfileMenuOpen((v) => !v)}
+                title="Account"
+                className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-accent-400 to-accent-500 font-display text-xs font-semibold text-ink-900"
+              >
+                {user?.avatar_url ? (
+                  <img src={`${API_BASE_URL}${user.avatar_url}`} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  initials
+                )}
+              </button>
+              {profileMenuOpen && (
+                <div className="absolute right-0 top-full z-30 mt-2 w-44 rounded-2xl border border-white/15 bg-ink-900/95 p-1.5 text-sm backdrop-blur-xl">
+                  <button
+                    onClick={() => {
+                      setProfileSettingsOpen(true)
+                      setProfileMenuOpen(false)
+                    }}
+                    className="block w-full rounded-lg px-3 py-2 text-left text-white/80 hover:bg-white/10"
+                  >
+                    Profile settings
+                  </button>
+                  <button onClick={logout} className="block w-full rounded-lg px-3 py-2 text-left text-white/80 hover:bg-white/10">
+                    Sign out
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </header>
+
+        {profileSettingsOpen && <ProfileSettings onClose={() => setProfileSettingsOpen(false)} />}
 
         {/* Mobile/tablet dropdown nav */}
         {menuOpen && (

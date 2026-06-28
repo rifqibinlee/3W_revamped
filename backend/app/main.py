@@ -1,5 +1,8 @@
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.agent.router import router as agent_router
 from app.analytics.router import router as analytics_router
@@ -31,6 +34,9 @@ app.include_router(siteplanning_router)
 app.include_router(agent_router)
 app.include_router(rag_router)
 app.include_router(datamgmt_router)
+
+Path(settings.avatar_dir).mkdir(parents=True, exist_ok=True)
+app.mount("/avatars", StaticFiles(directory=settings.avatar_dir), name="avatars")
 
 
 @app.get("/health")

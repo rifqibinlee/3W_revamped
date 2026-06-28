@@ -34,6 +34,7 @@ class User(Base):
     # str, so comparisons/serialization work transparently, and this avoids
     # cross-dialect enum-type quirks (Postgres native enums vs SQLite).
     role: Mapped[str] = mapped_column(String(20), default=Role.STAFF.value)
+    avatar_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     login_history: Mapped[list["LoginHistory"]] = relationship(back_populates="user")

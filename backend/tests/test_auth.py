@@ -211,3 +211,76 @@ def test_super_admin_can_delete_user_via_api(client) -> None:
 
     login_resp = client.post("/auth/login", json={"username": "deletable_user", "password": "password123"})
     assert login_resp.status_code == 401
+
+
+def test_change_own_password_requires_current_password(db_session) -> None:
+    user = service.register_user(db_session, "harriet", "harriet@example.com", "oldpassword", Role.STAFF)
+    try:
+        service.change_own_password(db_session, user, "wrongcurrent", "newpassword123")
+        assert False, "expected WrongPasswordError"
+    except service.WrongPasswordError:
+        pass
+    # password unchanged
+    authed = service.authenticate(db_session, "harriet", "oldpassword")
+    assert authed.id == user.id
+
+
+def test_change_own_password_succeeds_with_correct_current(db_session) -> None:
+    user = service.register_user(db_session, "ivan", "ivan@example.com", "oldpassword", Role.STAFF)
+    service.change_own_password(db_session, user, "oldpassword", "newpassword123")
+    authed = service.authenticate(db_session, "ivan", "newpassword123")
+    assert authed.id == user.id
+
+
+def test_set_avatar_url_persists(db_session) -> None:
+    user = service.register_user(db_session, "judy", "judy@example.com", "password123", Role.STAFF)
+    updated = service.set_avatar_url(db_session, user, "/avatars/judy-123.png")
+    assert updated.avatar_url == "/avatars/judy-123.png"
+
+
+def test_change_own_password_via_api(client) -> None:
+    headers = _register_and_login(client, "kyle_pw")
+    resp = client.put(
+        "/auth/me/password",
+        json={"current_password": "password123", "new_password": "freshpassword456"},
+        headers=headers,
+    )
+    assert resp.status_code == 204
+    login_resp = client.post("/auth/login", json={"username": "kyle_pw", "password": "freshpassword456"})
+    assert login_resp.status_code == 200
+
+
+def test_change_own_password_via_api_rejects_wrong_current(client) -> None:
+    headers = _register_and_login(client, "liam_pw")
+    resp = client.put(
+        "/auth/me/password",
+        json={"current_password": "notright", "new_password": "freshpassword456"},
+        headers=headers,
+    )
+    assert resp.status_code == 401
+
+
+def test_upload_avatar_via_api(client, tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("app.auth.router.settings.avatar_dir", str(tmp_path))
+    headers = _register_and_login(client, "mona_avatar")
+
+    png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32  # not a real PNG, just bytes — content-type is what's checked
+    resp = client.post(
+        "/auth/me/avatar",
+        files={"file": ("avatar.png", png_bytes, "image/png")},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["avatar_url"].startswith("/avatars/")
+    assert body["avatar_url"].endswith(".png")
+
+
+def test_upload_avatar_rejects_non_image(client) -> None:
+    headers = _register_and_login(client, "nina_avatar")
+    resp = client.post(
+        "/auth/me/avatar",
+        files={"file": ("notes.txt", b"hello", "text/plain")},
+        headers=headers,
+    )
+    assert resp.status_code == 400
