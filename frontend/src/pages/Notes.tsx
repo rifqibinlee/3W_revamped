@@ -3,7 +3,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { GlassPanel } from '../components/GlassPanel'
 import { api, ApiError, type AnnotationOut, type ProjectOut } from '../lib/api'
-import { addCoverageHolesLayer, addStatusLayer, getBaseStyle } from '../lib/mapLayers'
+import { addCoverageHolesLayer, addStatusLayer, getSatelliteStyle } from '../lib/mapLayers'
 
 const DEFAULT_CENTER: [number, number] = [101.5, 3.1]
 
@@ -54,7 +54,7 @@ export function Notes() {
       mapRef.current = null
     }
     if (!node) return
-    const map = new maplibregl.Map({ container: node, style: getBaseStyle(), center: DEFAULT_CENTER, zoom: 11 })
+    const map = new maplibregl.Map({ container: node, style: getSatelliteStyle(), center: DEFAULT_CENTER, zoom: 11 })
     mapRef.current = map
     map.addControl(new maplibregl.NavigationControl(), 'top-right')
     map.on('load', () => {

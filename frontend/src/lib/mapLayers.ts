@@ -71,6 +71,34 @@ export function getBaseStyle(): maplibregl.StyleSpecification {
   }
 }
 
+// Esri satellite imagery + a CartoDB label-only overlay, as a single
+// combined style — same stack the Map page's "Satellite" mode uses,
+// but baked into one style spec for pages (Notes/Projects) that don't
+// have a Layers panel to toggle between base modes.
+export function getSatelliteStyle(): maplibregl.StyleSpecification {
+  return {
+    version: 8,
+    sources: {
+      'satellite-base': {
+        type: 'raster',
+        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+        tileSize: 256,
+        attribution: 'Esri',
+      },
+      'satellite-labels': {
+        type: 'raster',
+        tiles: ['https://a.basemaps.cartocdn.com/rastertiles/light_only_labels/{z}/{x}/{y}@2x.png'],
+        tileSize: 256,
+        attribution: '© OpenStreetMap contributors © CARTO',
+      },
+    },
+    layers: [
+      { id: 'satellite-base-layer', type: 'raster', source: 'satellite-base' },
+      { id: 'satellite-labels-layer', type: 'raster', source: 'satellite-labels' },
+    ],
+  }
+}
+
 export function fmt(n: number | null | undefined, digits = 1): string {
   return n == null || Number.isNaN(n) ? '—' : n.toFixed(digits)
 }

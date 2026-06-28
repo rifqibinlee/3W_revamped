@@ -301,7 +301,7 @@ export function MapPage() {
     ['signalMid', 'Signal (-121 to -130)', <span key="sw" className="h-2.5 w-2.5 rounded-full bg-[#f97316]" />],
     ['signalLow', 'Signal (<-130)', <span key="sw" className="h-2.5 w-2.5 rounded-full bg-[#dc2626]" />],
   ] as const
-  const [baseMap, setBaseMap] = useState<'normal' | 'satellite'>('normal')
+  const [baseMap, setBaseMap] = useState<'normal' | 'satellite'>('satellite')
   const [layerToggles, setLayerToggles] = useState({
     healthySites: true, congestedSites: true, heatmap: false,
     coverage2g: false, coverage3g: false, coverage4g: false, coverage5g: false,
