@@ -106,6 +106,7 @@ export function Dashboard() {
   const [summary, setSummary] = useState<SummaryStats>({ total_sectors: 0, congested_count: 0, avg_volume_gb: 0 })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
 
   const [activeTab, setActiveTab] = useState<TabKey>('sectors')
   const [pages, setPages] = useState<Record<TabKey, number>>({ sectors: 0, forecast: 0, congested: 0 })
@@ -174,13 +175,38 @@ export function Dashboard() {
     }
   }
 
+  async function handleExportUnifiedCd() {
+    setExporting(true)
+    setError(null)
+    try {
+      await api.downloadReport('cd-combined', 'CD_Combined_Results.csv')
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not export CD Combined Results')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   if (loading) return <p className="text-sm text-white/60">Loading…</p>
   if (error) return <p className="text-sm text-red-300">{error}</p>
 
   return (
     <div className="space-y-4">
       <GlassPanel>
-        <FilterBar options={options} filters={filters} onChange={setFilters} />
+        <div className="mb-3 flex items-center justify-between">
+          <FilterBar options={options} filters={filters} onChange={setFilters} />
+          <button
+            onClick={handleExportUnifiedCd}
+            disabled={exporting}
+            title="Download the unified CD (Combined Data) report as CSV"
+            className="flex shrink-0 items-center gap-2 rounded-xl bg-gradient-to-r from-sky-700 to-sky-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+            </svg>
+            {exporting ? 'Exporting…' : 'Export Unified CD'}
+          </button>
+        </div>
         <div className="mt-4 flex flex-wrap gap-3 border-t border-white/10 pt-4">
           <StatTile value={summary.total_sectors} label="Total sectors" />
           <StatTile value={summary.congested_count} label="Congested sectors" tone="danger" />

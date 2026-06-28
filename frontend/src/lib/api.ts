@@ -33,6 +33,25 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>
 }
 
+async function downloadFile(path: string, filename: string): Promise<void> {
+  const token = getToken()
+  const headers = new Headers()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+
+  const response = await fetch(`${API_BASE_URL}${path}`, { headers })
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ detail: response.statusText }))
+    throw new ApiError(response.status, body.detail ?? 'Download failed')
+  }
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 async function uploadFile<T>(path: string, file: File): Promise<T> {
   const token = getToken()
   const headers = new Headers()
@@ -374,6 +393,9 @@ export const api = {
   me: () => request<UserOut>('/auth/me'),
 
   listUsers: () => request<UserOut[]>('/auth/users'),
+
+  downloadReport: (report: 'cd-combined' | 'sector-metrics' | 'congested-sectors', filename: string) =>
+    downloadFile(`/analytics/download/${report}`, filename),
 
   setUserPassword: (userId: string, newPassword: string) =>
     request<void>(`/auth/users/${userId}/password`, { method: 'PUT', body: JSON.stringify({ new_password: newPassword }) }),

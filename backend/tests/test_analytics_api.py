@@ -136,3 +136,23 @@ def test_geoserver_fixed_layers_endpoint_returns_configured_names(client) -> Non
     body = resp.json()
     assert "substations_layer" in body
     assert "buildings_layer" in body
+
+
+def test_download_report_rejects_unknown_report(client) -> None:
+    resp = client.get("/analytics/download/not-a-real-report")
+    assert resp.status_code == 404
+
+
+def test_download_report_returns_404_when_file_missing(client) -> None:
+    resp = client.get("/analytics/download/cd-combined")
+    assert resp.status_code == 404
+
+
+def test_download_report_serves_existing_file(client, tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("app.analytics.router.settings.parquet_dir", str(tmp_path))
+    (tmp_path / "CD_Combined_Results.csv").write_text("year,week,zoom_sector_id\n2026,10,SITE001_Macro_1\n")
+
+    resp = client.get("/analytics/download/cd-combined")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/csv")
+    assert "SITE001_Macro_1" in resp.text

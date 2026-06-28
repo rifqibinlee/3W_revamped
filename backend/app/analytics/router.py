@@ -1,9 +1,34 @@
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse
 
 from app.analytics import service
 from app.core.config import settings
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
+
+# The three downloadable reports the legacy app served from S3 presigned
+# URLs (/download/cd_file, /download/sector, /download/congested) — the
+# cd_combined_result ETL stage already writes these CSVs straight into
+# parquet_dir as one of its three outputs, so this just serves the file
+# that's already sitting there instead of needing S3 at all.
+_DOWNLOADABLE_REPORTS = {
+    "cd-combined": "CD_Combined_Results.csv",
+    "sector-metrics": "Sector_Metrics.csv",
+    "congested-sectors": "Congested_Sectors.csv",
+}
+
+
+@router.get("/download/{report}")
+def download_report(report: str) -> FileResponse:
+    filename = _DOWNLOADABLE_REPORTS.get(report)
+    if filename is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Unknown report '{report}'")
+    path = Path(settings.parquet_dir) / filename
+    if not path.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"{filename} hasn't been generated yet — run the ETL pipeline first")
+    return FileResponse(path, filename=filename, media_type="text/csv")
 
 
 @router.get("/current-status")
