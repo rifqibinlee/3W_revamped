@@ -38,11 +38,14 @@ export function Projects() {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [assigneeId, setAssigneeId] = useState('')
+  const [assigneeQuery, setAssigneeQuery] = useState('')
+  const [assigneeSuggestionsOpen, setAssigneeSuggestionsOpen] = useState(false)
   const [creating, setCreating] = useState(false)
 
   const [taskTitle, setTaskTitle] = useState('')
   const [taskAssigneeIds, setTaskAssigneeIds] = useState<string[]>([])
-  const [assigneeMenuOpen, setAssigneeMenuOpen] = useState(false)
+  const [taskAssigneeQuery, setTaskAssigneeQuery] = useState('')
+  const [taskAssigneeSuggestionsOpen, setTaskAssigneeSuggestionsOpen] = useState(false)
   const [taskDueDate, setTaskDueDate] = useState('')
   const [commentBody, setCommentBody] = useState('')
 
@@ -136,6 +139,18 @@ export function Projects() {
     return users.find((u) => u.id === id)?.username ?? id.slice(0, 8)
   }
 
+  const assigneeMatches =
+    assigneeQuery.trim().length === 0
+      ? []
+      : users.filter((u) => u.id !== assigneeId && u.username.toLowerCase().includes(assigneeQuery.trim().toLowerCase()))
+
+  const taskAssigneeMatches =
+    taskAssigneeQuery.trim().length === 0
+      ? []
+      : users.filter(
+          (u) => !taskAssigneeIds.includes(u.id) && u.username.toLowerCase().includes(taskAssigneeQuery.trim().toLowerCase()),
+        )
+
   async function handleCreateProject(e: FormEvent) {
     e.preventDefault()
     if (!assigneeId) return
@@ -166,7 +181,6 @@ export function Projects() {
       setTaskTitle('')
       setTaskAssigneeIds([])
       setTaskDueDate('')
-      setAssigneeMenuOpen(false)
       refreshDetail()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not create task')
@@ -263,21 +277,47 @@ export function Projects() {
               placeholder="Title"
               className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
             />
-            <select
-              value={assigneeId}
-              onChange={(e) => setAssigneeId(e.target.value)}
-              required
-              className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
-            >
-              <option value="" className="bg-ink-900">
-                Assignee…
-              </option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id} className="bg-ink-900">
-                  {u.username}
-                </option>
-              ))}
-            </select>
+            {assigneeId ? (
+              <div className="flex items-center justify-between rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm">
+                <span>{userLabel(assigneeId)}</span>
+                <button type="button" onClick={() => setAssigneeId('')} className="text-white/40 hover:text-white">
+                  ×
+                </button>
+              </div>
+            ) : (
+              <div className="relative">
+                <input
+                  type="text"
+                  value={assigneeQuery}
+                  onChange={(e) => {
+                    setAssigneeQuery(e.target.value)
+                    setAssigneeSuggestionsOpen(true)
+                  }}
+                  onFocus={() => setAssigneeSuggestionsOpen(true)}
+                  onBlur={() => setTimeout(() => setAssigneeSuggestionsOpen(false), 150)}
+                  placeholder="Assignee…"
+                  className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
+                />
+                {assigneeSuggestionsOpen && assigneeMatches.length > 0 && (
+                  <div className="absolute left-0 top-full z-10 mt-1 w-full overflow-hidden rounded-xl border border-white/15 bg-ink-900/95 text-sm backdrop-blur-xl">
+                    {assigneeMatches.slice(0, 6).map((u) => (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => {
+                          setAssigneeId(u.id)
+                          setAssigneeQuery('')
+                          setAssigneeSuggestionsOpen(false)
+                        }}
+                        className="block w-full px-3 py-1.5 text-left text-white/80 hover:bg-white/10"
+                      >
+                        {u.username}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -360,32 +400,50 @@ export function Projects() {
                   placeholder="Task title"
                   className="min-w-[160px] flex-1 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
                 />
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setAssigneeMenuOpen((v) => !v)}
-                    className="min-w-[140px] rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-left text-xs text-white/80 focus:border-sky-400/60 focus:outline-none"
-                  >
-                    {taskAssigneeIds.length === 0
-                      ? 'Assignees…'
-                      : taskAssigneeIds.map((id) => userLabel(id)).join(', ')}
-                  </button>
-                  {assigneeMenuOpen && (
-                    <div className="absolute left-0 top-full z-20 mt-1 w-44 max-h-48 overflow-y-auto rounded-xl border border-white/15 bg-ink-900/95 p-1.5 text-xs backdrop-blur-xl">
-                      {users.map((u) => (
-                        <label key={u.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-white/5">
-                          <input
-                            type="checkbox"
-                            checked={taskAssigneeIds.includes(u.id)}
-                            onChange={(e) =>
-                              setTaskAssigneeIds((prev) =>
-                                e.target.checked ? [...prev, u.id] : prev.filter((id) => id !== u.id),
-                              )
-                            }
-                            className="accent-sky-400"
-                          />
+                <div className="relative min-w-[160px]">
+                  {taskAssigneeIds.length > 0 && (
+                    <div className="mb-1 flex flex-wrap gap-1">
+                      {taskAssigneeIds.map((id) => (
+                        <span key={id} className="flex items-center gap-1 rounded-full bg-sky-400/15 px-2 py-0.5 text-[11px] text-sky-200">
+                          {userLabel(id)}
+                          <button
+                            type="button"
+                            onClick={() => setTaskAssigneeIds((prev) => prev.filter((x) => x !== id))}
+                            className="text-sky-200/60 hover:text-white"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <input
+                    type="text"
+                    value={taskAssigneeQuery}
+                    onChange={(e) => {
+                      setTaskAssigneeQuery(e.target.value)
+                      setTaskAssigneeSuggestionsOpen(true)
+                    }}
+                    onFocus={() => setTaskAssigneeSuggestionsOpen(true)}
+                    onBlur={() => setTimeout(() => setTaskAssigneeSuggestionsOpen(false), 150)}
+                    placeholder={taskAssigneeIds.length === 0 ? 'Assignees…' : 'Add another…'}
+                    className="w-full rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
+                  />
+                  {taskAssigneeSuggestionsOpen && taskAssigneeMatches.length > 0 && (
+                    <div className="absolute left-0 top-full z-20 mt-1 w-full overflow-hidden rounded-xl border border-white/15 bg-ink-900/95 text-xs backdrop-blur-xl">
+                      {taskAssigneeMatches.slice(0, 6).map((u) => (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onClick={() => {
+                            setTaskAssigneeIds((prev) => [...prev, u.id])
+                            setTaskAssigneeQuery('')
+                            setTaskAssigneeSuggestionsOpen(false)
+                          }}
+                          className="block w-full px-2.5 py-1.5 text-left text-white/80 hover:bg-white/10"
+                        >
                           {u.username}
-                        </label>
+                        </button>
                       ))}
                     </div>
                   )}
