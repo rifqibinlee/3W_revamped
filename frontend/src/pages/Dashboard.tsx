@@ -302,7 +302,7 @@ export function Dashboard() {
         <p className="mb-4 font-display text-3xl font-semibold text-accent-400">{fmtCurrency(capex.total_capex)}</p>
 
         <div className="grid gap-4 md:grid-cols-2">
-          <div>
+          <div className="min-w-0">
             <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-white/45">By upgrade case</p>
             {capex.by_case.length === 0 ? (
               <p className="text-sm text-white/50">No CAPEX data — run the ETL pipeline first.</p>
@@ -322,7 +322,7 @@ export function Dashboard() {
             )}
           </div>
 
-          <div>
+          <div className="min-w-0">
             <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-white/45">By region</p>
             {capex.by_region.length === 0 ? (
               <p className="text-sm text-white/50">No region data.</p>
@@ -511,8 +511,8 @@ function BarRow({ label, value, max, barClassName, sublabel }: { label: string; 
   return (
     <div>
       <div className="mb-1 flex items-baseline justify-between gap-2 text-xs">
-        <span className="truncate text-white/75" title={label}>{label}</span>
-        <span className="shrink-0 font-semibold text-white">
+        <span className="min-w-0 flex-1 truncate text-white/75" title={label}>{label}</span>
+        <span className="shrink-0 whitespace-nowrap font-semibold text-white">
           {fmtCurrency(value)}
           {sublabel && <span className="ml-1.5 font-normal text-white/45">{sublabel}</span>}
         </span>
