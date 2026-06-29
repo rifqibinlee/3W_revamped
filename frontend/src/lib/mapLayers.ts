@@ -1,6 +1,56 @@
-import type { FeatureCollection } from 'geojson'
+import type { FeatureCollection, Geometry } from 'geojson'
 import maplibregl from 'maplibre-gl'
 import { api, type CurrentStatusRow, type SiteDetail } from './api'
+
+// Flattens every coordinate pair out of any GeoJSON geometry type —
+// used to fit the map to a shape regardless of whether it's a Point,
+// LineString, or Polygon. (A prior version only handled the Point
+// case and fell back to a hardcoded default center otherwise, so a
+// drawn polygon/line annotation would "not show up": the map jumped
+// to an unrelated location at deep zoom instead of panning to the
+// shape that was actually drawn.)
+function flattenCoordinates(geometry: Geometry): [number, number][] {
+  switch (geometry.type) {
+    case 'Point':
+      return [geometry.coordinates as [number, number]]
+    case 'LineString':
+    case 'MultiPoint':
+      return geometry.coordinates as [number, number][]
+    case 'Polygon':
+    case 'MultiLineString':
+      return (geometry.coordinates as [number, number][][]).flat()
+    case 'MultiPolygon':
+      return (geometry.coordinates as [number, number][][][]).flat(2)
+    case 'GeometryCollection':
+      return geometry.geometries.flatMap(flattenCoordinates)
+    default:
+      return []
+  }
+}
+
+// Fits the map to every annotation's geometry (not just the first
+// one), falling back to a single default-centered view when there's
+// nothing to show yet.
+export function fitMapToAnnotations(
+  map: maplibregl.Map,
+  annotations: { geometry: unknown }[],
+  defaultCenter: [number, number],
+) {
+  const allCoords = annotations.flatMap((a) => flattenCoordinates(a.geometry as Geometry))
+  if (allCoords.length === 0) {
+    map.jumpTo({ center: defaultCenter, zoom: 11 })
+    return
+  }
+  if (allCoords.length === 1) {
+    map.jumpTo({ center: allCoords[0], zoom: 14 })
+    return
+  }
+  const bounds = allCoords.reduce(
+    (b, c) => b.extend(c),
+    new maplibregl.LngLatBounds(allCoords[0], allCoords[0]),
+  )
+  map.fitBounds(bounds, { padding: 60, maxZoom: 16, duration: 0 })
+}
 
 // Covers the real site distribution (lat 1.3-6.2, lng 101.6-104.3) —
 // used by the Notes/Projects embedded maps to show coverage holes

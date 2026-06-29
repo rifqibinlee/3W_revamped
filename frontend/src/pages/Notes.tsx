@@ -3,7 +3,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { GlassPanel } from '../components/GlassPanel'
 import { api, ApiError, type AnnotationOut, type ProjectOut } from '../lib/api'
-import { addCoverageHolesLayer, addStatusLayer, getSatelliteStyle } from '../lib/mapLayers'
+import { addCoverageHolesLayer, addStatusLayer, fitMapToAnnotations, getSatelliteStyle } from '../lib/mapLayers'
 
 const DEFAULT_CENTER: [number, number] = [101.5, 3.1]
 
@@ -68,12 +68,7 @@ export function Notes() {
     if (!map) return
 
     const apply = () => {
-      const first = annotations[0]
-      const center: [number, number] =
-        first && first.geometry.type === 'Point'
-          ? (first.geometry.coordinates as [number, number])
-          : DEFAULT_CENTER
-      map.jumpTo({ center, zoom: first ? 14 : 11 })
+      fitMapToAnnotations(map, annotations, DEFAULT_CENTER)
 
       const sourceId = 'note-annotations'
       const data: GeoJSON.FeatureCollection = {
