@@ -620,3 +620,81 @@ def test_forecast_status_returns_one_row_per_site_not_per_sector(tmp_path, monke
     assert len(rows) == 1
     assert rows[0]["site_id"] == "SITE002"
     assert rows[0]["congested"] is True
+
+
+def test_sector_metrics_search_filters_by_zoom_sector_id_substring(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_congestion_fixture(tmp_path, [
+        ("SITE001", "SITE001_Macro_1", "Central", "C1", "Celcom", True, 10.0, 10, 2026),
+        ("SITE002", "SITE002_Macro_1", "Southern", "C2", "Digi", False, 20.0, 10, 2026),
+    ])
+    result = service.sector_metrics(service.Filters(search="site001"))
+    assert len(result["rows"]) == 1
+    assert result["rows"][0]["zoom_sector_id"] == "SITE001_Macro_1"
+
+
+def test_forecast_table_search_filters_by_zoom_sector_id_substring(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_parquet(
+        tmp_path / "forecast_results.parquet",
+        [("SITE001_Macro_1", "Celcom", 1, 2026), ("SITE002_Macro_1", "Celcom", 1, 2026)],
+        ("zoom_sector_id", "operator", "week", "year"),
+    )
+    result = service.forecast_table(service.Filters(search="SITE002"))
+    assert len(result["rows"]) == 1
+    assert result["rows"][0]["zoom_sector_id"] == "SITE002_Macro_1"
+
+
+def test_capex_summary_returns_empty_when_no_data(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    assert service.capex_summary() == {"total_capex": 0.0, "by_case": [], "by_region": [], "top_sites": []}
+
+
+def test_capex_summary_aggregates_by_case_region_and_top_sites(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_parquet(
+        tmp_path / "capex_upgrades_pre_capex.parquet",
+        [
+            ("SITE001_Macro_1", "Case 1", 1000.0),
+            ("SITE001_Macro_2", "Case 1", 2000.0),
+            ("SITE002_Macro_1", "Case 2", 500.0),
+        ],
+        ("zoom_sector_id", "suggested_upgrade_case", "estimated_total_capex_rm"),
+    )
+    _write_parquet(
+        tmp_path / "site_coordinates.parquet",
+        [("SITE001", "Central", "C1", 3.1, 101.6), ("SITE002", "Southern", "C2", 1.5, 103.7)],
+        ("site_id", "region", "cluster", "latitude", "longitude"),
+    )
+
+    result = service.capex_summary()
+    assert result["total_capex"] == 3500.0
+    assert result["by_case"][0]["upgrade_case"] == "Case 1"
+    assert result["by_case"][0]["total_capex_rm"] == 3000.0
+    assert {r["region"] for r in result["by_region"]} == {"Central", "Southern"}
+    assert result["top_sites"][0]["site_id"] == "SITE001"
+    assert result["top_sites"][0]["total_capex_rm"] == 3000.0
+    assert result["top_sites"][0]["sector_count"] == 2
+
+
+def test_capex_summary_filters_by_region_and_search(tmp_path, monkeypatch) -> None:
+    _setup(tmp_path, monkeypatch)
+    _write_parquet(
+        tmp_path / "capex_upgrades_pre_capex.parquet",
+        [
+            ("SITE001_Macro_1", "Case 1", 1000.0),
+            ("SITE002_Macro_1", "Case 2", 500.0),
+        ],
+        ("zoom_sector_id", "suggested_upgrade_case", "estimated_total_capex_rm"),
+    )
+    _write_parquet(
+        tmp_path / "site_coordinates.parquet",
+        [("SITE001", "Central", "C1", 3.1, 101.6), ("SITE002", "Southern", "C2", 1.5, 103.7)],
+        ("site_id", "region", "cluster", "latitude", "longitude"),
+    )
+
+    by_region = service.capex_summary(region="Central")
+    assert by_region["total_capex"] == 1000.0
+
+    by_search = service.capex_summary(search="site002")
+    assert by_search["total_capex"] == 500.0

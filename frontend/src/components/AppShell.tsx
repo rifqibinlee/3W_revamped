@@ -8,7 +8,7 @@ import { AnimatedBackground } from './AnimatedBackground'
 import { ProfileSettings } from './ProfileSettings'
 
 const NAV_ITEMS = [
-  { to: '/', label: 'Dashboard' },
+  { to: '/', label: 'RAN Forecast' },
   { to: '/map', label: 'Map' },
   { to: '/notes', label: 'Notes' },
   { to: '/projects', label: 'Projects' },

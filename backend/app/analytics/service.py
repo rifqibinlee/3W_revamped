@@ -257,12 +257,18 @@ class Filters:
         week: int | None = None,
         operator: str | None = None,
         cluster: str | None = None,
+        search: str | None = None,
     ):
         self.region = region
         self.year = year
         self.week = week
         self.operator = operator
         self.cluster = cluster
+        # Substring match against zoom_sector_id — that column already
+        # carries the site_id as its prefix (e.g. "SITE001_Macro_1"), so
+        # one search box covers both "find this site" and "find this
+        # exact sector" without needing a separate site_id column.
+        self.search = search
 
     def where_clause(self, table_alias: str = "", available_columns: tuple[str, ...] | None = None) -> tuple[str, list]:
         """available_columns restricts which filters apply — forecast_results
@@ -291,6 +297,9 @@ class Filters:
         if self.cluster and _has("cluster"):
             clauses.append(f"{prefix}cluster = ?")
             params.append(self.cluster)
+        if self.search and _has("zoom_sector_id"):
+            clauses.append(f"LOWER({prefix}zoom_sector_id) LIKE LOWER(?)")
+            params.append(f"%{self.search}%")
         sql = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         return sql, params
 
@@ -349,7 +358,7 @@ def forecast_table(filters: Filters, limit: int = 100, offset: int = 0) -> dict:
         return {"rows": [], "total": 0}
     con = get_connection()
     try:
-        where_sql, params = filters.where_clause(available_columns=("year", "week", "operator"))
+        where_sql, params = filters.where_clause(available_columns=("year", "week", "operator", "zoom_sector_id"))
         total = con.execute(f"SELECT count(*) FROM read_parquet('{path}'){where_sql}", params).fetchone()[0]
         rows = con.execute(
             f"SELECT * FROM read_parquet('{path}'){where_sql} ORDER BY year, week LIMIT ? OFFSET ?",
@@ -468,6 +477,89 @@ def site_detail(site_id: str) -> dict:
 
 def _capex_glob() -> str:
     return str(Path(settings.parquet_dir) / "capex_upgrades_*.parquet")
+
+
+def capex_summary(region: str | None = None, search: str | None = None) -> dict:
+    """Backs the Dashboard's CAPEX section: headline total (same flat
+    sum over every capex_upgrades_*.parquet row already used by
+    overview_stats/map_stats — capex_upgrades has ~3 rows per sector
+    across the dataset's sample weeks, summed as-is for consistency
+    with those existing totals rather than introducing a different,
+    non-reconciling number here), a breakdown by suggested upgrade
+    case, a breakdown by region, and the sites needing the most CAPEX."""
+    capex_files = _capex_files()
+    if not capex_files:
+        return {"total_capex": 0.0, "by_case": [], "by_region": [], "top_sites": []}
+
+    sites_path = _parquet_path("site_coordinates")
+    con = get_connection()
+    try:
+        join_clause = (
+            f"LEFT JOIN read_parquet('{sites_path}') s ON split_part(cu.zoom_sector_id, '_', 1) = s.site_id"
+            if sites_path.exists() else ""
+        )
+        region_col = "s.region" if sites_path.exists() else "NULL"
+
+        clauses: list[str] = []
+        params: list = []
+        if region and region != "All" and sites_path.exists():
+            clauses.append(f"{region_col} = ?")
+            params.append(region)
+        if search:
+            clauses.append("LOWER(cu.zoom_sector_id) LIKE LOWER(?)")
+            params.append(f"%{search}%")
+        where_sql = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+
+        base = f"FROM read_parquet('{_capex_glob()}') cu {join_clause}{where_sql}"
+
+        total_row = con.execute(f"SELECT sum(cu.estimated_total_capex_rm) {base}", params).fetchone()
+        total_capex = round(total_row[0], 2) if total_row and total_row[0] is not None else 0.0
+
+        by_case = con.execute(
+            f"""
+            SELECT COALESCE(cu.suggested_upgrade_case, 'Unknown') AS upgrade_case,
+                   count(DISTINCT cu.zoom_sector_id) AS sector_count,
+                   sum(cu.estimated_total_capex_rm) AS total_capex_rm
+            {base}
+            GROUP BY 1 ORDER BY total_capex_rm DESC LIMIT 10
+            """,
+            params,
+        ).fetchdf()
+
+        by_region = (
+            con.execute(
+                f"""
+                SELECT COALESCE({region_col}, 'Unknown') AS region,
+                       count(DISTINCT cu.zoom_sector_id) AS sector_count,
+                       sum(cu.estimated_total_capex_rm) AS total_capex_rm
+                {base}
+                GROUP BY 1 ORDER BY total_capex_rm DESC
+                """,
+                params,
+            ).fetchdf()
+            if sites_path.exists()
+            else None
+        )
+
+        top_sites = con.execute(
+            f"""
+            SELECT split_part(cu.zoom_sector_id, '_', 1) AS site_id, {region_col} AS region,
+                   count(DISTINCT cu.zoom_sector_id) AS sector_count,
+                   sum(cu.estimated_total_capex_rm) AS total_capex_rm
+            {base}
+            GROUP BY 1, 2 ORDER BY total_capex_rm DESC LIMIT 15
+            """,
+            params,
+        ).fetchdf()
+
+        return {
+            "total_capex": total_capex,
+            "by_case": by_case.to_dict("records"),
+            "by_region": by_region.to_dict("records") if by_region is not None else [],
+            "top_sites": top_sites.to_dict("records"),
+        }
+    finally:
+        con.close()
 
 
 def _capex_files() -> list[Path]:

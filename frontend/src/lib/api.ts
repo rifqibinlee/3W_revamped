@@ -351,6 +351,32 @@ export interface SummaryStats {
   avg_volume_gb: number
 }
 
+export interface CapexCaseBreakdown {
+  upgrade_case: string
+  sector_count: number
+  total_capex_rm: number
+}
+
+export interface CapexRegionBreakdown {
+  region: string
+  sector_count: number
+  total_capex_rm: number
+}
+
+export interface CapexTopSite {
+  site_id: string
+  region: string | null
+  sector_count: number
+  total_capex_rm: number
+}
+
+export interface CapexSummary {
+  total_capex: number
+  by_case: CapexCaseBreakdown[]
+  by_region: CapexRegionBreakdown[]
+  top_sites: CapexTopSite[]
+}
+
 export interface FilterOptions {
   regions: string[]
   years: number[]
@@ -364,6 +390,7 @@ export interface AnalyticsFilters {
   week?: number
   operator?: string
   cluster?: string
+  search?: string
 }
 
 function filterParams(filters: AnalyticsFilters = {}, page?: { limit: number; offset: number }): string {
@@ -397,6 +424,14 @@ export const api = {
 
   downloadReport: (report: 'cd-combined' | 'sector-metrics' | 'congested-sectors', filename: string) =>
     downloadFile(`/analytics/download/${report}`, filename),
+
+  capexSummary: (region?: string, search?: string) => {
+    const params = new URLSearchParams()
+    if (region && region !== 'All') params.set('region', region)
+    if (search) params.set('search', search)
+    const qs = params.toString()
+    return request<CapexSummary>(`/analytics/capex-summary${qs ? `?${qs}` : ''}`)
+  },
 
   setUserPassword: (userId: string, newPassword: string) =>
     request<void>(`/auth/users/${userId}/password`, { method: 'PUT', body: JSON.stringify({ new_password: newPassword }) }),

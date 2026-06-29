@@ -156,3 +156,15 @@ def test_download_report_serves_existing_file(client, tmp_path, monkeypatch) -> 
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/csv")
     assert "SITE001_Macro_1" in resp.text
+
+
+def test_capex_summary_endpoint_with_no_data(client) -> None:
+    resp = client.get("/analytics/capex-summary")
+    assert resp.status_code == 200
+    assert resp.json() == {"total_capex": 0.0, "by_case": [], "by_region": [], "top_sites": []}
+
+
+def test_sector_metrics_endpoint_accepts_search_param(client) -> None:
+    resp = client.get("/analytics/sector-metrics", params={"search": "SITE001"})
+    assert resp.status_code == 200
+    assert resp.json() == {"rows": [], "total": 0}

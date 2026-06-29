@@ -8,6 +8,8 @@ import {
   api,
   ApiError,
   type AnalyticsFilters,
+  type CapexSummary,
+  type CapexTopSite,
   type FilterOptions,
   type ForecastRow,
   type SectorMetricRow,
@@ -43,6 +45,11 @@ const STATUS_COLOR: Record<string, string> = {
 }
 
 const EMPTY_OPTIONS: FilterOptions = { regions: [], years: [], weeks: [], operators: [] }
+const EMPTY_CAPEX: CapexSummary = { total_capex: 0, by_case: [], by_region: [], top_sites: [] }
+
+function fmtCurrency(n: number): string {
+  return `RM ${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+}
 
 type TabKey = 'sectors' | 'forecast' | 'congested'
 
@@ -99,6 +106,13 @@ const forecastColumns: Column<ForecastRow>[] = [
   { key: 'congested', label: 'Forecast status', render: (r) => <CongestedBadge congested={r.congested} /> },
 ]
 
+const capexTopSitesColumns: Column<CapexTopSite>[] = [
+  { key: 'site_id', label: 'Site' },
+  { key: 'region', label: 'Region', render: (r) => r.region ?? '—' },
+  { key: 'sector_count', label: 'Sectors needing upgrade' },
+  { key: 'total_capex_rm', label: 'CAPEX needed', render: (r) => fmtCurrency(r.total_capex_rm) },
+]
+
 export function Dashboard() {
   const [tasks, setTasks] = useState<TaskOut[]>([])
   const [options, setOptions] = useState<FilterOptions>(EMPTY_OPTIONS)
@@ -121,6 +135,10 @@ export function Dashboard() {
   const [forecastSeries, setForecastSeries] = useState<SiteForecastSeries | null>(null)
   const [forecastChartLoading, setForecastChartLoading] = useState(false)
   const [forecastChartError, setForecastChartError] = useState<string | null>(null)
+
+  const [capex, setCapex] = useState<CapexSummary>(EMPTY_CAPEX)
+  const [capexRegion, setCapexRegion] = useState('All')
+  const [capexSearch, setCapexSearch] = useState('')
 
   useEffect(() => {
     Promise.all([api.ganttRows(), api.filterOptions()])
@@ -154,6 +172,10 @@ export function Dashboard() {
   }, [activeTab, filters, page])
 
   useEffect(refreshActiveTab, [refreshActiveTab])
+
+  useEffect(() => {
+    api.capexSummary(capexRegion, capexSearch || undefined).then(setCapex).catch(() => setError('Could not load CAPEX data'))
+  }, [capexRegion, capexSearch])
 
   async function handleGenerateForecast() {
     const siteId = forecastSiteInput.trim()
@@ -252,18 +274,107 @@ export function Dashboard() {
       </div>
 
       <GlassPanel>
-        <div className="mb-3.5 flex flex-wrap gap-1.5 border-b border-white/10 pb-3.5">
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setActiveTab(t.key)}
-              className={`rounded-xl px-3.5 py-2 text-sm font-semibold ${
-                activeTab === t.key ? 'bg-sky-400 text-ink-900' : 'text-white/70 hover:bg-white/5'
-              }`}
+        <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="font-display text-sm font-semibold">CAPEX needed</p>
+            <p className="text-xs text-white/55">Estimated upgrade cost across every sector recommendation in the dataset.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <select
+              value={capexRegion}
+              onChange={(e) => setCapexRegion(e.target.value)}
+              className="rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
             >
-              {t.label}
-            </button>
-          ))}
+              {['All', ...options.regions].map((r) => (
+                <option key={r} value={r} className="bg-ink-900">{r}</option>
+              ))}
+            </select>
+            <input
+              type="text"
+              value={capexSearch}
+              onChange={(e) => setCapexSearch(e.target.value)}
+              placeholder="Filter CAPEX by site/sector ID…"
+              className="min-w-[180px] rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
+            />
+          </div>
+        </div>
+
+        <p className="mb-4 font-display text-3xl font-semibold text-accent-400">{fmtCurrency(capex.total_capex)}</p>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-white/45">By upgrade case</p>
+            {capex.by_case.length === 0 ? (
+              <p className="text-sm text-white/50">No CAPEX data — run the ETL pipeline first.</p>
+            ) : (
+              <div className="space-y-2.5">
+                {capex.by_case.map((c) => (
+                  <BarRow
+                    key={c.upgrade_case}
+                    label={c.upgrade_case}
+                    value={c.total_capex_rm}
+                    max={capex.by_case[0].total_capex_rm}
+                    barClassName="bg-gradient-to-r from-accent-400 to-accent-500"
+                    sublabel={`${c.sector_count} sectors`}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-white/45">By region</p>
+            {capex.by_region.length === 0 ? (
+              <p className="text-sm text-white/50">No region data.</p>
+            ) : (
+              <div className="space-y-2.5">
+                {capex.by_region.map((r) => (
+                  <BarRow
+                    key={r.region}
+                    label={r.region}
+                    value={r.total_capex_rm}
+                    max={capex.by_region[0].total_capex_rm}
+                    barClassName="bg-gradient-to-r from-sky-400 to-sky-500"
+                    sublabel={`${r.sector_count} sectors`}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <p className="mb-2 mt-5 text-xs font-semibold uppercase tracking-wider text-white/45">Sites needing the most upgrades</p>
+        <DataTable columns={capexTopSitesColumns} rows={capex.top_sites} emptyMessage="No sites need upgrades, or no CAPEX data yet." />
+      </GlassPanel>
+
+      <GlassPanel>
+        <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3.5">
+          <div className="flex flex-wrap gap-1.5">
+            {TABS.map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setActiveTab(t.key)}
+                className={`rounded-xl px-3.5 py-2 text-sm font-semibold ${
+                  activeTab === t.key ? 'bg-sky-400 text-ink-900' : 'text-white/70 hover:bg-white/5'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <div className="relative min-w-[200px]">
+            <svg viewBox="0 0 24 24" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
+            <input
+              type="text"
+              value={filters.search ?? ''}
+              onChange={(e) => setFilters({ ...filters, search: e.target.value || undefined })}
+              placeholder="Search site or sector ID…"
+              className="w-full rounded-xl border border-white/15 bg-white/5 py-2 pl-9 pr-3 text-sm placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
+            />
+          </div>
         </div>
 
         {activeTab === 'sectors' && (
@@ -392,5 +503,23 @@ function LegendItem({ color, label }: { color: string; label: string }) {
       <span className={`inline-block h-3 w-3 rounded ${color}`} />
       {label}
     </span>
+  )
+}
+
+function BarRow({ label, value, max, barClassName, sublabel }: { label: string; value: number; max: number; barClassName: string; sublabel?: string }) {
+  const pct = max > 0 ? Math.max((value / max) * 100, 2) : 0
+  return (
+    <div>
+      <div className="mb-1 flex items-baseline justify-between gap-2 text-xs">
+        <span className="truncate text-white/75" title={label}>{label}</span>
+        <span className="shrink-0 font-semibold text-white">
+          {fmtCurrency(value)}
+          {sublabel && <span className="ml-1.5 font-normal text-white/45">{sublabel}</span>}
+        </span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-white/8">
+        <div className={`h-full rounded-full ${barClassName}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
   )
 }

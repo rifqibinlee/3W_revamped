@@ -111,8 +111,9 @@ def _filters(
     week: int | None = None,
     operator: str | None = None,
     cluster: str | None = None,
+    search: str | None = None,
 ) -> service.Filters:
-    return service.Filters(region=region, year=year, week=week, operator=operator, cluster=cluster)
+    return service.Filters(region=region, year=year, week=week, operator=operator, cluster=cluster, search=search)
 
 
 @router.get("/filter-options")
@@ -123,6 +124,11 @@ def filter_options() -> dict:
 @router.get("/summary")
 def summary(filters: service.Filters = Depends(_filters)) -> dict:
     return service.summary_stats(filters)
+
+
+@router.get("/capex-summary")
+def capex_summary(region: str | None = None, search: str | None = None) -> dict:
+    return service.capex_summary(region=region, search=search)
 
 
 @router.get("/sector-metrics")
