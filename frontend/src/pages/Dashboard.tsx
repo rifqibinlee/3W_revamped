@@ -215,15 +215,15 @@ export function Dashboard() {
   return (
     <div className="space-y-4">
       <GlassPanel>
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <FilterBar options={options} filters={filters} onChange={setFilters} />
           <button
             onClick={handleExportUnifiedCd}
             disabled={exporting}
             title="Download the unified CD (Combined Data) report as CSV"
-            className="flex shrink-0 items-center gap-2 rounded-xl bg-gradient-to-r from-sky-700 to-sky-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+            className="flex w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-700 to-sky-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 sm:w-auto"
           >
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
             </svg>
             {exporting ? 'Exporting…' : 'Export Unified CD'}

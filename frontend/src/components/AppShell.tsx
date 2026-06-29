@@ -100,21 +100,30 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         {profileSettingsOpen && <ProfileSettings onClose={() => setProfileSettingsOpen(false)} />}
 
-        {/* Mobile/tablet dropdown nav */}
-        {menuOpen && (
-          <nav className="mb-6 -mt-3 flex flex-col gap-0.5 rounded-2xl border border-white/15 bg-ink-900/95 p-2 text-sm text-white/75 backdrop-blur-xl md:hidden">
+        {/* Mobile/tablet dropdown nav — always mounted (not conditionally
+            rendered) so both the open and close transitions actually play;
+            a grid-rows-[0fr]→[1fr] animation is what lets this collapse to
+            a true 0 height smoothly, which a plain max-height guess can't
+            do without clipping or a content-dependent magic number. */}
+        <nav
+          className={`-mt-3 grid overflow-hidden rounded-2xl border bg-ink-900/95 text-sm text-white/75 backdrop-blur-xl transition-all duration-[220ms] ease-out md:hidden ${
+            menuOpen ? 'mb-6 grid-rows-[1fr] border-white/15 opacity-100' : 'mb-0 grid-rows-[0fr] border-transparent opacity-0'
+          }`}
+        >
+          <div className="flex min-h-0 flex-col gap-0.5 p-2">
             {navItems.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}
                 onClick={() => setMenuOpen(false)}
+                tabIndex={menuOpen ? 0 : -1}
                 className={({ isActive }) => `rounded-lg px-3 py-2 ${isActive ? 'bg-white/10 font-medium text-white' : 'hover:bg-white/5'}`}
               >
                 {item.label}
               </NavLink>
             ))}
-          </nav>
-        )}
+          </div>
+        </nav>
 
         <main>{children}</main>
       </div>
