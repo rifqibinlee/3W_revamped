@@ -21,13 +21,13 @@ cd "$REPO_DIR"
 
 echo "==> Stopping any existing containers..."
 cd "$REPO_DIR/infra"
-docker-compose down --remove-orphans
+docker-compose --env-file "$REPO_DIR/backend/.env" down --remove-orphans
 
 echo "==> Building backend image..."
-docker-compose build --no-cache backend
+docker-compose --env-file "$REPO_DIR/backend/.env" build --no-cache backend
 
 echo "==> Starting all services..."
-docker-compose up -d
+docker-compose --env-file "$REPO_DIR/backend/.env" up -d
 
 echo ""
 echo "All done. Services:"
