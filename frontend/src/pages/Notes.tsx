@@ -12,7 +12,7 @@ export function Notes() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [annotations, setAnnotations] = useState<AnnotationOut[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [, setError] = useState<string | null>(null)
 
   const mapRef = useRef<maplibregl.Map | null>(null)
 

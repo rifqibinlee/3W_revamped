@@ -1217,7 +1217,7 @@ export function MapPage() {
     setCursor()
     function handleClick(e: maplibregl.MapMouseEvent) {
       // Only register clicks on actual site markers, not empty map
-      const features = map.queryRenderedFeatures(e.point, { layers: ['current-status-point'] })
+      const features = map!.queryRenderedFeatures(e.point, { layers: ['current-status-point'] })
       if (!features.length) return
       const props = features[0].properties as { site_id: string }
       const row = currentStatusRows.find((r) => r.site_id === props.site_id)
@@ -1545,7 +1545,6 @@ export function MapPage() {
               <button
                 onClick={() => {
                   setDrawMenuOpen((v) => !v)
-                  setGensetMenuOpen(false)
                 }}
                 title="Draw an annotation"
                 className={`flex h-9 w-9 items-center justify-center rounded-xl ${

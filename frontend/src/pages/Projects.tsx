@@ -33,7 +33,7 @@ export function Projects() {
   const [comments, setComments] = useState<CommentOut[]>([])
   const [users, setUsers] = useState<UserOut[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [, setError] = useState<string | null>(null)
 
   const [taskTitle, setTaskTitle] = useState('')
   const [taskAssigneeIds, setTaskAssigneeIds] = useState<string[]>([])
