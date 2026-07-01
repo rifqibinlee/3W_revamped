@@ -128,7 +128,7 @@ def _run(con, raw_file_path: str, cell_reference_path: str, temp_csv: str | None
         csv_path = raw_file_path
 
     try:
-        con.execute(f"CREATE OR REPLACE TEMP VIEW raw AS SELECT * FROM read_csv('{csv_path}', ignore_errors=true)")
+        con.execute(f"CREATE OR REPLACE TEMP VIEW raw AS SELECT * FROM read_csv('{csv_path}', ignore_errors=true, delim=',', quote='\"', sample_size=-1, max_line_size=10000000)")
         raw_columns = [r[0] for r in con.execute("DESCRIBE raw").fetchall()]
 
         cleaned_to_raw: dict[str, str] = {}
