@@ -4,57 +4,43 @@ services:
     container_name: 3w_postgres
     restart: always
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-threew}
+      POSTGRES_USER:     ${POSTGRES_USER:-threew}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in backend/.env}
-      POSTGRES_DB: ${POSTGRES_DB:-threew}
-      POSTGRES_SHARED_BUFFERS: ${POSTGRES_SHARED_BUFFERS:-512MB}
-    ports:
-      - "5433:5432"
+      POSTGRES_DB:       ${POSTGRES_DB:-threew}
     volumes:
       - ./volumes/postgres:/var/lib/postgresql/data
     mem_limit: 2g
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-threew} -d ${POSTGRES_DB:-threew}"]
+      test:     ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-threew} -d ${POSTGRES_DB:-threew}"]
       interval: 5s
-      timeout: 5s
-      retries: 10
-
-  geoserver:
-    image: kartoza/geoserver:2.24.0
-    container_name: 3w_geoserver
-    restart: always
-    ports:
-      - "8600:8080"
-    volumes:
-      - ./volumes/geoserver:/opt/geoserver/data_dir
-    mem_limit: 1g
+      timeout:  5s
+      retries:  10
 
   backend:
-    build: ../backend
+    build:         ../backend
     container_name: 3w_backend
-    restart: always
-    env_file: ../backend/.env
+    restart:       always
+    env_file:      ../backend/.env
     environment:
-      POSTGRES_DSN: postgresql+psycopg://${POSTGRES_USER:-threew}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-threew}
-      GEOSERVER_URL: http://geoserver:8080/geoserver
-      CORS_ORIGINS: '["http://localhost","http://${EC2_HOST:-localhost}"]'
-      DUCKDB_PATH: /app/data/analytics.duckdb
-      PARQUET_DIR: /app/data/parquet
-      RAW_DATA_DIR: /app/data/raw
-      AVATAR_DIR: /app/data/avatars
-      USE_REAL_S3: ${USE_REAL_S3:-false}
-      AWS_REGION: ${AWS_REGION:-ap-southeast-1}
-      AWS_ACCESS_KEY: ${AWS_ACCESS_KEY:-}
-      AWS_SECRET_KEY: ${AWS_SECRET_KEY:-}
-      S3_BUCKET: ${S3_BUCKET:-jejak-mappro-demo}
-      S3_CELL_REF_PREFIX: ${S3_CELL_REF_PREFIX:-3W-data/site-coverage-params/referenceData/}
+      POSTGRES_DSN:            "postgresql+psycopg://${POSTGRES_USER:-threew}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-threew}"
+      CORS_ORIGINS:            '["http://localhost:5000","http://${EC2_HOST:-localhost}:5000"]'
+      DUCKDB_PATH:             /app/data/analytics.duckdb
+      PARQUET_DIR:             /app/data/parquet
+      RAW_DATA_DIR:            /app/data/raw
+      AVATAR_DIR:              /app/data/avatars
+      USE_REAL_S3:             ${USE_REAL_S3:-false}
+      AWS_REGION:              ${AWS_REGION:-ap-southeast-1}
+      AWS_ACCESS_KEY:          ${AWS_ACCESS_KEY:-}
+      AWS_SECRET_KEY:          ${AWS_SECRET_KEY:-}
+      S3_BUCKET:               ${S3_BUCKET:-jejak-mappro-demo}
+      S3_CELL_REF_PREFIX:      ${S3_CELL_REF_PREFIX:-3W-data/site-coverage-params/referenceData/}
       S3_LOCATION_DATA_PREFIX: ${S3_LOCATION_DATA_PREFIX:-3W-data/site-coverage-params/locationData/}
-      S3_NETWORK_DATA_PREFIX: ${S3_NETWORK_DATA_PREFIX:-3W-data/raw-network-data/}
-      S3_TRAIN_EXCEL_PREFIX: ${S3_TRAIN_EXCEL_PREFIX:-3W-data/train-ai-data/excel-data/}
-      S3_TRAIN_PDF_PREFIX: ${S3_TRAIN_PDF_PREFIX:-3W-data/train-ai-data/pdf-data/}
-      S3_PROCESSED_PREFIX: ${S3_PROCESSED_PREFIX:-3W-data/processed/}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+      S3_NETWORK_DATA_PREFIX:  ${S3_NETWORK_DATA_PREFIX:-3W-data/raw-network-data/}
+      S3_TRAIN_EXCEL_PREFIX:   ${S3_TRAIN_EXCEL_PREFIX:-3W-data/train-ai-data/excel-data/}
+      S3_TRAIN_PDF_PREFIX:     ${S3_TRAIN_PDF_PREFIX:-3W-data/train-ai-data/pdf-data/}
+      S3_PROCESSED_PREFIX:     ${S3_PROCESSED_PREFIX:-3W-data/processed/}
+      ANTHROPIC_API_KEY:       ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL:         ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
     volumes:
       - ../backend/data:/app/data
     mem_limit: 3g
@@ -63,11 +49,11 @@ services:
         condition: service_healthy
 
   nginx:
-    image: nginx:alpine
+    image:         nginx:alpine
     container_name: 3w_nginx
-    restart: always
+    restart:       always
     ports:
-      - "80:80"
+      - "5000:5000"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ../frontend/dist:/usr/share/nginx/html:ro

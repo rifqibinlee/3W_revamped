@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -17,7 +18,18 @@ from app.rag.router import router as rag_router
 from app.reviews.router import router as reviews_router
 from app.siteplanning.router import router as siteplanning_router
 
-app = FastAPI(title="3W Revamped API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Install DuckDB httpfs extension once per process. Doing this per-connection
+    # causes catalog write-write conflicts when multiple workers start concurrently.
+    from app.ingestion.parquet_store import install_httpfs
+    install_httpfs()
+    yield
+
+
+app = FastAPI(title="3W Revamped API", lifespan=lifespan)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -25,6 +37,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 app.include_router(auth_router)
 app.include_router(annotations_router)
 app.include_router(chat_router)
