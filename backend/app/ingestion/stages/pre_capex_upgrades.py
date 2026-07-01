@@ -171,7 +171,7 @@ def _run(con, raw_file_path: str, cell_reference_path: str, congestion_path: str
     i = 0
     for source in sources:
         reader = "read_csv" if source.lower().endswith(".csv") else "read_parquet"
-        reader_opts = ", ignore_errors=true, sample_size=-1" if reader == "read_csv" else ""
+        reader_opts = ", ignore_errors=true, delim=',', quote='\"', escape='\"', sample_size=-1, max_line_size=10000000, strict_mode=false, null_padding=true, parallel=false" if reader == "read_csv" else ""
         con.execute(f"CREATE OR REPLACE TEMP VIEW raw_{i} AS SELECT * FROM {reader}('{source}'{reader_opts})")
         raw_columns = [r[0] for r in con.execute(f"DESCRIBE raw_{i}").fetchall()]
 

@@ -153,7 +153,7 @@ def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> str:
             # sample_size=-1 scans the whole file for type inference instead
             # of the first ~20k rows, avoiding cast errors on columns that
             # are numeric early on but switch to text later in large files.
-            reader_opts = ", ignore_errors=true, sample_size=-1" if reader == "read_csv" else ""
+            reader_opts = ", ignore_errors=true, delim=',', quote='\"', escape='\"', sample_size=-1, max_line_size=10000000, strict_mode=false, null_padding=true, parallel=false" if reader == "read_csv" else ""
             con.execute(f"CREATE OR REPLACE TEMP VIEW read_file AS SELECT * FROM {reader}('{source}'{reader_opts})")
             columns = [r[0] for r in con.execute("DESCRIBE read_file").fetchall()]
             clause = _select_clause(columns)

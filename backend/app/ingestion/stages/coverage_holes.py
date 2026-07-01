@@ -117,7 +117,7 @@ def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> str | None
                 # sample_size=-1 scans the whole file for type inference
                 # instead of the first ~20k rows, avoiding cast errors on
                 # columns that are numeric early then switch to text later.
-                reader_opts = ", ignore_errors=true, sample_size=-1"
+                reader_opts = ", ignore_errors=true, delim=',', quote='\"', escape='\"', sample_size=-1, max_line_size=10000000, strict_mode=false, null_padding=true, parallel=false"
             else:
                 reader = "read_parquet"
                 reader_opts = ""

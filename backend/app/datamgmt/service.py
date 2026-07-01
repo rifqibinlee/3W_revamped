@@ -136,7 +136,7 @@ def preview_file(category: str, week: str | None, filename: str) -> dict:
         con = duckdb.connect()
         try:
             df = con.execute(
-                f"SELECT * FROM read_csv(?, ignore_errors=true, sample_size=-1) LIMIT {PREVIEW_LIMIT + 1}",
+                f"SELECT * FROM read_csv(?, ignore_errors=true, delim=',', quote='\"', escape='\"', sample_size=-1, max_line_size=10000000, strict_mode=false, null_padding=true, parallel=false) LIMIT {PREVIEW_LIMIT + 1}",
                 [str(path)],
             ).fetchdf()
         finally:
