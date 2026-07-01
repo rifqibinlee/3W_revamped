@@ -53,7 +53,10 @@ def list_objects(bucket: str, prefix: str) -> list[str]:
     paginator = client.get_paginator("list_objects_v2")
     keys: list[str] = []
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-        keys.extend(obj["Key"] for obj in page.get("Contents", []))
+        keys.extend(
+            obj["Key"] for obj in page.get("Contents", [])
+            if obj["Size"] > 0 and not obj["Key"].endswith("/")
+        )
     return keys
 
 
