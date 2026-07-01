@@ -107,7 +107,7 @@ def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> str:
 
         for source in sources:
             if source.lower().endswith(".csv"):
-                con.execute(f"CREATE OR REPLACE TEMP VIEW read_file_raw AS SELECT * FROM read_csv('{source}', ignore_errors=true)")
+                con.execute(f"CREATE OR REPLACE TEMP VIEW read_file_raw AS SELECT * FROM read_csv('{source}', ignore_errors=true, delim=',', quote='\"', sample_size=-1)")
                 raw_columns = [r[0] for r in con.execute("DESCRIBE read_file_raw").fetchall()]
                 renames = ", ".join(f'"{c}" AS "{_clean_header(c)}"' for c in raw_columns)
                 con.execute(f"CREATE OR REPLACE TEMP VIEW read_file AS SELECT {renames} FROM read_file_raw")
