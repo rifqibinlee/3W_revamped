@@ -18,17 +18,15 @@ sector ordered by (year, week) — a window function here instead of the
 legacy `groupby(...).cumsum()` on a pre-sorted DataFrame.
 """
 
-from pathlib import Path
-
 from app.analytics.db import get_connection
-from app.core.config import settings
+from app.ingestion import parquet_store
 
 OUTPUT_TABLE = "congestion_analysis"
 
 DROP_REGION_VALUES = ("0", "UNKNOWN", "NAN", "NONE")
 
 
-def run(xc_paths: list[str], xd_paths: list[str]) -> Path:
+def run(xc_paths: list[str], xd_paths: list[str]) -> str:
     con = get_connection()
     try:
         return _run(con, xc_paths, xd_paths)
@@ -72,8 +70,7 @@ def _run(con, xc_paths: list[str], xd_paths: list[str]) -> Path:
         FROM filtered
     """)
 
-    output_path = Path(settings.parquet_dir) / f"{OUTPUT_TABLE}.parquet"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_uri = parquet_store.parquet_uri(f"{OUTPUT_TABLE}.parquet")
     con.execute(f"""
         COPY (
             SELECT
@@ -86,6 +83,6 @@ def _run(con, xc_paths: list[str], xd_paths: list[str]) -> Path:
                     PARTITION BY zoom_sector_id, year, month
                 ) AS congested_count_month
             FROM flagged
-        ) TO '{output_path}' (FORMAT PARQUET, COMPRESSION SNAPPY)
+        ) TO '{output_uri}' (FORMAT PARQUET, COMPRESSION SNAPPY)
     """)
-    return output_path
+    return output_uri

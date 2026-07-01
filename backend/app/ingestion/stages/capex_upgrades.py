@@ -19,7 +19,7 @@ from pathlib import Path
 import pandas as pd
 
 from app.analytics.db import get_connection
-from app.core.config import settings
+from app.ingestion import parquet_store
 from app.ingestion.capex_solver import BW_MAP_GLOBAL, calculate_upgrade_path
 
 OUTPUT_TABLE = "capex_upgrades"
@@ -27,7 +27,7 @@ OUTPUT_TABLE = "capex_upgrades"
 LAYER_BAND_KEYS = ("F1_L18", "F1_L21", "F1_L26", "F1_L9", "F2_L18", "F2_L21", "F2_L26", "F2_L9")
 
 
-def run(pre_capex_path: str, congestion_path: str, cell_reference_path: str, pricing: dict) -> Path | None:
+def run(pre_capex_path: str, congestion_path: str, cell_reference_path: str, pricing: dict) -> str | None:
     con = get_connection()
     try:
         return _run(con, pre_capex_path, congestion_path, cell_reference_path, pricing)
@@ -35,7 +35,7 @@ def run(pre_capex_path: str, congestion_path: str, cell_reference_path: str, pri
         con.close()
 
 
-def _run(con, pre_capex_path: str, congestion_path: str, cell_reference_path: str, pricing: dict) -> Path | None:
+def _run(con, pre_capex_path: str, congestion_path: str, cell_reference_path: str, pricing: dict) -> str | None:
     context_df = con.execute(f"""
         SELECT
             pc.zoom_sector_id, pc.dataset_type, pc.year, pc.week,
@@ -109,8 +109,7 @@ def _run(con, pre_capex_path: str, congestion_path: str, cell_reference_path: st
         return None
 
     df = pd.DataFrame(results)
-    output_path = Path(settings.parquet_dir) / f"{OUTPUT_TABLE}_{Path(pre_capex_path).stem}.parquet"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_uri = parquet_store.parquet_uri(f"{OUTPUT_TABLE}_{parquet_store.stem_from_uri(pre_capex_path)}.parquet")
     con.register("capex_results_df", df)
-    con.execute(f"COPY capex_results_df TO '{output_path}' (FORMAT PARQUET, COMPRESSION SNAPPY)")
-    return output_path
+    con.execute(f"COPY capex_results_df TO '{output_uri}' (FORMAT PARQUET, COMPRESSION SNAPPY)")
+    return output_uri

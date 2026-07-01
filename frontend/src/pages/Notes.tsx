@@ -1,8 +1,8 @@
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { GlassPanel } from '../components/GlassPanel'
-import { api, ApiError, type AnnotationOut, type ProjectOut } from '../lib/api'
+import { api, type AnnotationOut, type ProjectOut } from '../lib/api'
 import { addCoverageHolesLayer, addStatusLayer, fitMapToAnnotations, getSatelliteStyle } from '../lib/mapLayers'
 
 const DEFAULT_CENTER: [number, number] = [101.5, 3.1]
@@ -13,10 +13,6 @@ export function Notes() {
   const [annotations, setAnnotations] = useState<AnnotationOut[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
-  const [title, setTitle] = useState('')
-  const [description, setDescription] = useState('')
-  const [creating, setCreating] = useState(false)
 
   const mapRef = useRef<maplibregl.Map | null>(null)
 
@@ -109,56 +105,11 @@ export function Notes() {
     else map.once('load', apply)
   }, [annotations])
 
-  async function handleCreate(e: FormEvent) {
-    e.preventDefault()
-    setCreating(true)
-    try {
-      const note = await api.createProject({ title, description: description || undefined })
-      setTitle('')
-      setDescription('')
-      load()
-      setSelectedId(note.id)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not create note')
-    } finally {
-      setCreating(false)
-    }
-  }
-
   if (loading) return <p className="text-sm text-white/60">Loading…</p>
 
   return (
     <div className="grid gap-4 md:grid-cols-[280px_1fr]">
       <div className="space-y-4">
-        <GlassPanel>
-          <p className="mb-3.5 font-display text-sm font-semibold">New note</p>
-          <form onSubmit={handleCreate} className="space-y-2.5">
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              required
-              placeholder="Title"
-              className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
-            />
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Description"
-              rows={3}
-              className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
-            />
-            <button
-              type="submit"
-              disabled={creating}
-              className="w-full rounded-xl bg-gradient-to-r from-accent-400 to-accent-500 px-4 py-2 text-sm font-semibold text-ink-900 disabled:opacity-60"
-            >
-              {creating ? 'Creating…' : 'Create note'}
-            </button>
-          </form>
-          {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
-        </GlassPanel>
-
         <GlassPanel>
           <p className="mb-3.5 font-display text-sm font-semibold">Notes ({notes.length})</p>
           {notes.length === 0 ? (
@@ -182,7 +133,7 @@ export function Notes() {
       <div className="space-y-4">
         {!selectedNote && (
           <GlassPanel>
-            <p className="text-sm text-white/50">Select or create a note.</p>
+            <p className="text-sm text-white/50">Select a note.</p>
           </GlassPanel>
         )}
 

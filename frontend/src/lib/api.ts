@@ -408,6 +408,21 @@ function filterParams(filters: AnalyticsFilters = {}, page?: { limit: number; of
   return qs ? `?${qs}` : ''
 }
 
+export interface GsLayer {
+  name: string
+  title: string
+  abstract: string
+  enabled: boolean
+  type: string
+  default_style: string
+  default_style_workspace: string
+}
+
+export interface GsStyle {
+  name: string
+  workspace: string | null
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<TokenPair>('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
@@ -456,7 +471,10 @@ export const api = {
 
   ganttRows: () => request<TaskOut[]>('/tasks/gantt/rows'),
 
-  currentStatus: () => request<CurrentStatusRow[]>('/analytics/current-status'),
+  availableWeeks: () => request<{ year: number; week: number }[]>('/analytics/available-weeks'),
+
+  currentStatus: (year?: number, week?: number) =>
+    request<CurrentStatusRow[]>(year != null && week != null ? `/analytics/current-status?year=${year}&week=${week}` : '/analytics/current-status'),
 
   forecastStatus: (year: number, week: number) =>
     request<CurrentStatusRow[]>(`/analytics/forecast-status?year=${year}&week=${week}`),
@@ -637,4 +655,33 @@ export const api = {
 
   runDataPipeline: (sync = true) =>
     request<PipelineRunResult>(`/data-management/run-pipeline?sync=${sync}`, { method: 'POST' }),
+
+  // GeoServer admin
+  gsWorkspaces: () => request<{ name: string }[]>('/geoserver-admin/workspaces'),
+  gsLayers: () => request<GsLayer[]>('/geoserver-admin/layers'),
+  gsUpdateLayer: (layerName: string, patch: { enabled?: boolean; default_style?: string }) =>
+    request<void>(`/geoserver-admin/layers/${layerName}`, { method: 'PUT', body: JSON.stringify(patch) }),
+  gsStyles: () => request<GsStyle[]>('/geoserver-admin/styles'),
+  gsStyleSld: (styleName: string, workspace?: string) =>
+    request<{ sld: string }>(`/geoserver-admin/styles/${styleName}/sld${workspace ? `?workspace=${workspace}` : ''}`),
+  gsUpdateStyleSld: (styleName: string, sld: string, workspace?: string) =>
+    request<void>(`/geoserver-admin/styles/${styleName}`, {
+      method: 'PUT',
+      body: JSON.stringify({ sld, workspace: workspace ?? null }),
+    }),
+  gsCreateStyle: (styleName: string, sld: string, workspace?: string) =>
+    request<void>(`/geoserver-admin/styles/${styleName}`, {
+      method: 'POST',
+      body: JSON.stringify({ sld, workspace: workspace ?? null }),
+    }),
+  gsDatastores: (workspace: string) => request<{ name: string }[]>(`/geoserver-admin/workspaces/${workspace}/datastores`),
+  gsAvailableFeatureTypes: (workspace: string, datastore: string) =>
+    request<string[]>(`/geoserver-admin/workspaces/${workspace}/datastores/${datastore}/available`),
+  gsPublish: (workspace: string, datastore: string, nativeName: string, title: string) =>
+    request<void>('/geoserver-admin/publish', {
+      method: 'POST',
+      body: JSON.stringify({ workspace, datastore, native_name: nativeName, title }),
+    }),
+
+  syncKnowledgeBase: () => request<{ status: string; message: string }>('/rag/sync-s3', { method: 'POST' }),
 }

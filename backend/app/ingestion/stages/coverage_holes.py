@@ -22,7 +22,7 @@ from sklearn.cluster import DBSCAN
 from sklearn.neighbors import NearestNeighbors
 
 from app.analytics.db import get_connection
-from app.core.config import settings
+from app.ingestion import parquet_store
 from app.ingestion import parquet_safe
 
 OUTPUT_TABLE = "coverage_holes"
@@ -88,7 +88,7 @@ def auto_tune_dbscan(x_radians: np.ndarray) -> tuple[float, int]:
     return eps_rad, min_pts
 
 
-def run(raw_file_paths: list[str]) -> Path | None:
+def run(raw_file_paths: list[str]) -> str | None:
     con = get_connection()
     temp_parquets: list[str] = []
     try:
@@ -99,7 +99,7 @@ def run(raw_file_paths: list[str]) -> Path | None:
             Path(p).unlink(missing_ok=True)
 
 
-def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> Path | None:
+def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> str | None:
     selects: list[str] = []
     i = 0
 
@@ -168,8 +168,7 @@ def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> Path | Non
     db = DBSCAN(eps=eps_rad, min_samples=min_pts, metric="haversine", algorithm="ball_tree").fit(x_rad)
     points_df["cluster_id"] = db.labels_.astype(int)
 
-    output_path = Path(settings.parquet_dir) / f"{OUTPUT_TABLE}.parquet"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_uri = parquet_store.parquet_uri(f"{OUTPUT_TABLE}.parquet")
     con.register("coverage_holes_df", points_df)
-    con.execute(f"COPY coverage_holes_df TO '{output_path}' (FORMAT PARQUET, COMPRESSION SNAPPY)")
-    return output_path
+    con.execute(f"COPY coverage_holes_df TO '{output_uri}' (FORMAT PARQUET, COMPRESSION SNAPPY)")
+    return output_uri

@@ -35,13 +35,6 @@ export function Projects() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const [title, setTitle] = useState('')
-  const [description, setDescription] = useState('')
-  const [assigneeId, setAssigneeId] = useState('')
-  const [assigneeQuery, setAssigneeQuery] = useState('')
-  const [assigneeSuggestionsOpen, setAssigneeSuggestionsOpen] = useState(false)
-  const [creating, setCreating] = useState(false)
-
   const [taskTitle, setTaskTitle] = useState('')
   const [taskAssigneeIds, setTaskAssigneeIds] = useState<string[]>([])
   const [taskAssigneeQuery, setTaskAssigneeQuery] = useState('')
@@ -136,35 +129,12 @@ export function Projects() {
     return users.find((u) => u.id === id)?.username ?? id.slice(0, 8)
   }
 
-  const assigneeMatches =
-    assigneeQuery.trim().length === 0
-      ? []
-      : users.filter((u) => u.id !== assigneeId && u.username.toLowerCase().includes(assigneeQuery.trim().toLowerCase()))
-
   const taskAssigneeMatches =
     taskAssigneeQuery.trim().length === 0
       ? []
       : users.filter(
           (u) => !taskAssigneeIds.includes(u.id) && u.username.toLowerCase().includes(taskAssigneeQuery.trim().toLowerCase()),
         )
-
-  async function handleCreateProject(e: FormEvent) {
-    e.preventDefault()
-    if (!assigneeId) return
-    setCreating(true)
-    try {
-      const project = await api.createProject({ title, description: description || undefined, assignee_id: assigneeId })
-      setTitle('')
-      setDescription('')
-      setAssigneeId('')
-      load()
-      setSelectedId(project.id)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not create project')
-    } finally {
-      setCreating(false)
-    }
-  }
 
   async function handleCreateTask(e: FormEvent) {
     e.preventDefault()
@@ -218,7 +188,7 @@ export function Projects() {
 
   function taskActions(task: TaskOut) {
     const isAssignee = task.assignee_ids.includes(user?.id ?? '')
-    const isReviewer = task.creator_id === user?.id && !isAssignee
+    const isReviewer = task.creator_id === user?.id
     if (task.status === 'todo' && isAssignee) {
       return (
         <button className="text-xs text-sky-300" onClick={() => runTaskAction(() => api.startTask(task.id))}>
@@ -264,76 +234,6 @@ export function Projects() {
     <div className="grid gap-4 md:grid-cols-[280px_1fr]">
       <div className="space-y-4">
         <GlassPanel>
-          <p className="mb-3.5 font-display text-sm font-semibold">New project</p>
-          <form onSubmit={handleCreateProject} className="space-y-2.5">
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              required
-              placeholder="Title"
-              className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
-            />
-            {assigneeId ? (
-              <div className="flex items-center justify-between rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm">
-                <span>{userLabel(assigneeId)}</span>
-                <button type="button" onClick={() => setAssigneeId('')} className="text-white/40 hover:text-white">
-                  ×
-                </button>
-              </div>
-            ) : (
-              <div className="relative">
-                <input
-                  type="text"
-                  value={assigneeQuery}
-                  onChange={(e) => {
-                    setAssigneeQuery(e.target.value)
-                    setAssigneeSuggestionsOpen(true)
-                  }}
-                  onFocus={() => setAssigneeSuggestionsOpen(true)}
-                  onBlur={() => setTimeout(() => setAssigneeSuggestionsOpen(false), 150)}
-                  placeholder="Assignee…"
-                  className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
-                />
-                {assigneeSuggestionsOpen && assigneeMatches.length > 0 && (
-                  <div className="absolute left-0 top-full z-10 mt-1 w-full overflow-hidden rounded-xl border border-white/15 bg-ink-900/95 text-sm backdrop-blur-xl">
-                    {assigneeMatches.slice(0, 6).map((u) => (
-                      <button
-                        key={u.id}
-                        type="button"
-                        onClick={() => {
-                          setAssigneeId(u.id)
-                          setAssigneeQuery('')
-                          setAssigneeSuggestionsOpen(false)
-                        }}
-                        className="block w-full px-3 py-1.5 text-left text-white/80 hover:bg-white/10"
-                      >
-                        {u.username}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Description"
-              rows={2}
-              className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
-            />
-            <button
-              type="submit"
-              disabled={creating}
-              className="w-full rounded-xl bg-gradient-to-r from-accent-400 to-accent-500 px-4 py-2 text-sm font-semibold text-ink-900 disabled:opacity-60"
-            >
-              {creating ? 'Creating…' : 'Create project'}
-            </button>
-          </form>
-          {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
-        </GlassPanel>
-
-        <GlassPanel>
           <p className="mb-3.5 font-display text-sm font-semibold">Projects ({projects.length})</p>
           {projects.length === 0 ? (
             <p className="text-sm text-white/50">No projects yet.</p>
@@ -356,7 +256,7 @@ export function Projects() {
       <div className="space-y-4">
         {!selectedProject && (
           <GlassPanel>
-            <p className="text-sm text-white/50">Select or create a project.</p>
+            <p className="text-sm text-white/50">Select a project.</p>
           </GlassPanel>
         )}
 
@@ -386,7 +286,7 @@ export function Projects() {
 
         {selectedProject && (
           <>
-            <GlassPanel>
+            <GlassPanel className="relative z-20">
               <p className="mb-3.5 font-display text-sm font-semibold">New task</p>
               <form onSubmit={handleCreateTask} className="flex flex-wrap items-end gap-2">
                 <input
@@ -398,36 +298,34 @@ export function Projects() {
                   className="min-w-[160px] flex-1 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
                 />
                 <div className="relative min-w-[160px]">
-                  {taskAssigneeIds.length > 0 && (
-                    <div className="mb-1 flex flex-wrap gap-1">
-                      {taskAssigneeIds.map((id) => (
-                        <span key={id} className="flex items-center gap-1 rounded-full bg-sky-400/15 px-2 py-0.5 text-[11px] text-sky-200">
-                          {userLabel(id)}
-                          <button
-                            type="button"
-                            onClick={() => setTaskAssigneeIds((prev) => prev.filter((x) => x !== id))}
-                            className="text-sky-200/60 hover:text-white"
-                          >
-                            ×
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  <input
-                    type="text"
-                    value={taskAssigneeQuery}
-                    onChange={(e) => {
-                      setTaskAssigneeQuery(e.target.value)
-                      setTaskAssigneeSuggestionsOpen(true)
-                    }}
-                    onFocus={() => setTaskAssigneeSuggestionsOpen(true)}
-                    onBlur={() => setTimeout(() => setTaskAssigneeSuggestionsOpen(false), 150)}
-                    placeholder={taskAssigneeIds.length === 0 ? 'Assignees…' : 'Add another…'}
-                    className="w-full rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs placeholder:text-white/35 focus:border-sky-400/60 focus:outline-none"
-                  />
+                  <div className="flex min-h-[30px] flex-wrap items-center gap-1 rounded-lg border border-white/15 bg-white/5 px-2 py-1 focus-within:border-sky-400/60">
+                    {taskAssigneeIds.map((id) => (
+                      <span key={id} className="flex items-center gap-0.5 rounded-full bg-sky-400/15 px-1.5 py-0.5 text-[10px] text-sky-200">
+                        {userLabel(id)}
+                        <button
+                          type="button"
+                          onClick={() => setTaskAssigneeIds((prev) => prev.filter((x) => x !== id))}
+                          className="leading-none text-sky-200/60 hover:text-white"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                    <input
+                      type="text"
+                      value={taskAssigneeQuery}
+                      onChange={(e) => {
+                        setTaskAssigneeQuery(e.target.value)
+                        setTaskAssigneeSuggestionsOpen(true)
+                      }}
+                      onFocus={() => setTaskAssigneeSuggestionsOpen(true)}
+                      onBlur={() => setTimeout(() => setTaskAssigneeSuggestionsOpen(false), 150)}
+                      placeholder={taskAssigneeIds.length === 0 ? 'Assignees…' : 'Add…'}
+                      className="min-w-[60px] flex-1 bg-transparent text-xs placeholder:text-white/35 focus:outline-none"
+                    />
+                  </div>
                   {taskAssigneeSuggestionsOpen && taskAssigneeMatches.length > 0 && (
-                    <div className="absolute left-0 top-full z-20 mt-1 w-full overflow-hidden rounded-xl border border-white/15 bg-ink-900/95 text-xs backdrop-blur-xl">
+                    <div className="absolute left-0 top-full z-50 mt-1 w-full overflow-hidden rounded-xl border border-white/15 bg-ink-900/95 text-xs backdrop-blur-xl">
                       {taskAssigneeMatches.slice(0, 6).map((u) => (
                         <button
                           key={u.id}

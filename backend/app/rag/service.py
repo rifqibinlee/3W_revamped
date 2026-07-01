@@ -1,103 +1,146 @@
-"""PDF ingestion and similarity search for the agent's knowledge base.
+"""Document ingestion and full-text search for the agent's knowledge base.
 
-Ports `s3_ingest.py`'s chunk/embed/store flow, minus the S3-specific
-download step (this takes a local file path; whatever serves the file —
-S3, MinIO, an upload endpoint — is the router's concern, not this
-service's).
-
-`embeddings_provider` is injectable (same pattern as genset.py's
-`graph_provider`) so tests don't need a running Ollama server.
+Supports PDFs and Excel workbooks. Retrieval uses PostgreSQL built-in
+full-text search (to_tsvector / plainto_tsquery) — no pgvector extension
+or Ollama embeddings required.
 """
 
-from collections.abc import Callable
+import io
+import tempfile
+import os
 
-import numpy as np
+import pandas as pd
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pypdf import PdfReader
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from app.agent.llm import get_embeddings
 from app.rag.models import KnowledgeChunk
 
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
-
-EmbeddingsProvider = Callable[[list[str]], list[list[float]]]
-
-
-def _default_embed_documents(texts: list[str]) -> list[list[float]]:
-    return get_embeddings().embed_documents(texts)
+_splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
 
 
-def _default_embed_query(text: str) -> list[float]:
-    return get_embeddings().embed_query(text)
-
+# ── PDF ingestion ──────────────────────────────────────────────────────────────
 
 def extract_pages(pdf_path: str) -> list[tuple[int, str]]:
-    """Returns [(page_number, text), ...], 1-indexed pages, skipping blank ones."""
     reader = PdfReader(pdf_path)
     pages = []
     for i, page in enumerate(reader.pages, start=1):
-        text = page.extract_text() or ""
-        if text.strip():
-            pages.append((i, text))
+        t = page.extract_text() or ""
+        if t.strip():
+            pages.append((i, t))
     return pages
 
 
-def chunk_text(text: str) -> list[str]:
-    splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
-    return splitter.split_text(text)
-
-
-def ingest_pdf(
-    db: Session,
-    pdf_path: str,
-    source_name: str,
-    embed_documents: EmbeddingsProvider = _default_embed_documents,
-) -> int:
-    """Extracts, chunks, embeds, and stores every page of a PDF. Returns
-    the number of chunks stored."""
-    chunks_with_pages: list[tuple[int, str]] = []
+def ingest_pdf(db: Session, pdf_path: str, source_name: str) -> int:
+    chunks_stored = 0
     for page_number, page_text in extract_pages(pdf_path):
-        for chunk in chunk_text(page_text):
-            chunks_with_pages.append((page_number, chunk))
-
-    if not chunks_with_pages:
-        return 0
-
-    embeddings = embed_documents([c for _, c in chunks_with_pages])
-
-    for (page_number, chunk_text_), embedding in zip(chunks_with_pages, embeddings):
-        db.add(KnowledgeChunk(source=source_name, page=page_number, content=chunk_text_, embedding=embedding))
+        for chunk in _splitter.split_text(page_text):
+            db.add(KnowledgeChunk(source=source_name, page=page_number, content=chunk))
+            chunks_stored += 1
     db.commit()
-    return len(chunks_with_pages)
+    return chunks_stored
 
 
-def search(
-    db: Session,
-    query: str,
-    top_k: int = 5,
-    embed_query: Callable[[str], list[float]] = _default_embed_query,
-) -> list[KnowledgeChunk]:
-    """Ranks every stored chunk by cosine similarity to the query
-    embedding, in Python — see the module/model docstring for why this
-    isn't a pgvector <=> query."""
-    chunks = list(db.scalars(select(KnowledgeChunk)))
-    if not chunks:
+# ── Excel ingestion ────────────────────────────────────────────────────────────
+
+def ingest_excel(db: Session, file_path: str, source_name: str) -> int:
+    """Reads every sheet of an Excel file and stores each row as a chunk.
+
+    Rows are serialised as "col: value | col: value …" strings so the
+    agent can retrieve them with plain text search.
+    """
+    xls = pd.ExcelFile(file_path)
+    chunks_stored = 0
+    for sheet in xls.sheet_names:
+        df = xls.parse(sheet).fillna("")
+        for _, row in df.iterrows():
+            line = " | ".join(f"{col}: {val}" for col, val in row.items() if str(val).strip())
+            if not line.strip():
+                continue
+            for chunk in _splitter.split_text(line):
+                db.add(KnowledgeChunk(source=f"{source_name}:{sheet}", page=None, content=chunk))
+                chunks_stored += 1
+    db.commit()
+    return chunks_stored
+
+
+# ── S3 training-data sync ──────────────────────────────────────────────────────
+
+def sync_from_s3(db: Session) -> dict[str, int]:
+    """Downloads all PDFs and Excels from the training-data S3 prefixes and
+    ingests any that haven't been ingested yet (checked by source name).
+
+    Returns {source_name: chunks_added} for newly ingested files.
+    """
+    from app.core.config import settings
+    from app.ingestion.storage import get_s3_client, list_objects
+
+    existing: set[str] = set(db.scalars(select(KnowledgeChunk.source).distinct()))
+    client = get_s3_client()
+    bucket = settings.s3_bucket
+    results: dict[str, int] = {}
+
+    pdf_keys = list_objects(bucket, settings.s3_train_pdf_prefix)
+    excel_keys = list_objects(bucket, settings.s3_train_excel_prefix)
+
+    for key in pdf_keys:
+        source_name = key.split("/")[-1]
+        if source_name in existing:
+            continue
+        suffix = os.path.splitext(key)[1] or ".pdf"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            client.download_file(bucket, key, tmp_path)
+            n = ingest_pdf(db, tmp_path, source_name)
+            results[source_name] = n
+        finally:
+            os.remove(tmp_path)
+
+    for key in excel_keys:
+        source_name = key.split("/")[-1]
+        if source_name in existing:
+            continue
+        suffix = os.path.splitext(key)[1] or ".xlsx"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            client.download_file(bucket, key, tmp_path)
+            n = ingest_excel(db, tmp_path, source_name)
+            results[source_name] = n
+        finally:
+            os.remove(tmp_path)
+
+    return results
+
+
+# ── Search ─────────────────────────────────────────────────────────────────────
+
+def search(db: Session, query: str, top_k: int = 5) -> list[KnowledgeChunk]:
+    """Full-text search over knowledge chunks using PostgreSQL tsvector.
+
+    Falls back to a ILIKE substring match if FTS returns nothing, so short
+    or single-term queries still get results.
+    """
+    fts_sql = text(
+        "SELECT id FROM knowledge_chunks "
+        "WHERE to_tsvector('english', content) @@ plainto_tsquery('english', :q) "
+        "ORDER BY ts_rank(to_tsvector('english', content), plainto_tsquery('english', :q)) DESC "
+        "LIMIT :k"
+    )
+    rows = db.execute(fts_sql, {"q": query, "k": top_k}).fetchall()
+    ids = [r[0] for r in rows]
+
+    if not ids:
+        like_sql = text(
+            "SELECT id FROM knowledge_chunks WHERE content ILIKE :pat LIMIT :k"
+        )
+        rows = db.execute(like_sql, {"pat": f"%{query}%", "k": top_k}).fetchall()
+        ids = [r[0] for r in rows]
+
+    if not ids:
         return []
-
-    query_vec = np.array(embed_query(query))
-    query_norm = np.linalg.norm(query_vec)
-    if query_norm == 0:
-        return []
-
-    def similarity(chunk: KnowledgeChunk) -> float:
-        chunk_vec = np.array(chunk.embedding)
-        chunk_norm = np.linalg.norm(chunk_vec)
-        if chunk_norm == 0:
-            return -1.0
-        return float(np.dot(query_vec, chunk_vec) / (query_norm * chunk_norm))
-
-    ranked = sorted(chunks, key=similarity, reverse=True)
-    return ranked[:top_k]
+    return list(db.scalars(select(KnowledgeChunk).where(KnowledgeChunk.id.in_(ids))))

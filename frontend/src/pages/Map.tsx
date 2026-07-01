@@ -10,6 +10,7 @@ import {
   type CctvRunResult,
   type CoverageHolePoint,
   type CurrentStatusRow,
+  type ForecastRow,
   type GensetRouteResult,
   type GeoserverLayer,
   type MapBounds,
@@ -19,6 +20,7 @@ import {
   type UserOut,
 } from '../lib/api'
 import { addStatusLayer, fmt, getBaseStyle, statusGeoJson } from '../lib/mapLayers'
+import { ForecastModal } from '../components/ForecastModal'
 // Centered on the real site distribution across Peninsular Malaysia
 // (lat 1.3-6.2, lng 101.6-104.3), not just the Klang Valley — zoom 7
 // keeps the whole network visible by default instead of an empty patch.
@@ -220,14 +222,14 @@ function addAnnotationsLayer(map: maplibregl.Map, annotations: AnnotationOut[]) 
   }
 }
 
-function MapStatsPanel({ title, stats }: { title: string; stats: MapStats | null }) {
+function MapStatsPanel({ title, stats, compact = false }: { title: string; stats: MapStats | null; compact?: boolean }) {
   return (
     <GlassPanel>
-      <p className="mb-3.5 font-display text-sm font-semibold">{title}</p>
+      <p className="mb-3 font-display text-sm font-semibold">{title}</p>
       {!stats ? (
-        <p className="text-sm text-white/50">Pan or zoom the map to see stats for this area.</p>
+        <p className="text-sm text-white/50">Pan or zoom the map to load stats.</p>
       ) : (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div className={`grid gap-3 ${compact ? 'grid-cols-4' : 'grid-cols-2 sm:grid-cols-3'}`}>
           <div>
             <p className="text-[10px] uppercase tracking-wider text-white/45">Sites</p>
             <p className="font-display text-lg font-semibold">{stats.total_sites}</p>
@@ -244,18 +246,22 @@ function MapStatsPanel({ title, stats }: { title: string; stats: MapStats | null
             <p className="text-[10px] uppercase tracking-wider text-white/45">Coverage holes</p>
             <p className="font-display text-lg font-semibold">{stats.coverage_holes}</p>
           </div>
-          <div>
-            <p className="text-[10px] uppercase tracking-wider text-white/45">CAPEX needed</p>
-            <p className="font-display text-lg font-semibold">{fmtCurrency(stats.total_capex)}</p>
-          </div>
-          <div>
-            <p className="text-[10px] uppercase tracking-wider text-white/45">Worst coverage hole</p>
-            <p className="text-sm font-semibold">
-              {stats.worst_coverage_hole
-                ? `#${stats.worst_coverage_hole.cluster_id} (${stats.worst_coverage_hole.data_source}) · ${stats.worst_coverage_hole.point_count} pts`
-                : '—'}
-            </p>
-          </div>
+          {!compact && (
+            <>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-white/45">CAPEX needed</p>
+                <p className="font-display text-lg font-semibold">{fmtCurrency(stats.total_capex)}</p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-white/45">Worst coverage hole</p>
+                <p className="text-sm font-semibold">
+                  {stats.worst_coverage_hole
+                    ? `#${stats.worst_coverage_hole.cluster_id} (${stats.worst_coverage_hole.data_source}) · ${stats.worst_coverage_hole.point_count} pts`
+                    : '—'}
+                </p>
+              </div>
+            </>
+          )}
         </div>
       )}
     </GlassPanel>
@@ -265,14 +271,52 @@ function MapStatsPanel({ title, stats }: { title: string; stats: MapStats | null
 export function MapPage() {
   const containerRef = useRef<HTMLDivElement>(null)
   const splitLeftRef = useRef<HTMLDivElement>(null)
+  const splitMiddleRef = useRef<HTMLDivElement>(null)
   const splitRightRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
   const splitLeftMapRef = useRef<maplibregl.Map | null>(null)
+  const splitMiddleMapRef = useRef<maplibregl.Map | null>(null)
   const splitRightMapRef = useRef<maplibregl.Map | null>(null)
 
-  const [splitActive, setSplitActive] = useState(false)
+  const [splitMode, setSplitMode] = useState<'none' | 'two' | 'three'>('none')
+  const splitActive = splitMode !== 'none'
   const [forecastYear, setForecastYear] = useState(new Date().getFullYear())
   const [forecastWeek, setForecastWeek] = useState(13)
+  const [availableWeeks, setAvailableWeeks] = useState<{ year: number; week: number }[]>([])
+  const [mapFilterKey, setMapFilterKey] = useState<string>('latest')  // 'latest' or 'YYYY-WW'
+  const [pastKey, setPastKey] = useState<string>('')
+  // Pricing — two inputs matching legacy: material + engineering per 100 m
+  const [matPer100m, setMatPer100m] = useState(850)
+  const [engPer100m, setEngPer100m] = useState(200)
+
+  // Derive year/week from the selected key strings
+  const parseKey = (key: string): { year: number; week: number } | null => {
+    if (!key || key === 'latest') return null
+    const [y, w] = key.split('-').map(Number)
+    return { year: y, week: w }
+  }
+  const mapFilter = parseKey(mapFilterKey)
+  const mapFilterYear = mapFilter?.year ?? null
+  const mapFilterWeek = mapFilter?.week ?? null
+  const pastFilter = parseKey(pastKey)
+  const pastYear = pastFilter?.year ?? new Date().getFullYear()
+  const pastWeek = pastFilter?.week ?? 1
+
+  const [forecastModal, setForecastModal] = useState<{ siteId: string; rows: ForecastRow[] } | null>(null)
+
+  // Register a global so the MapLibre popup's "Full Forecast" button can open
+  // the React modal. The popup is injected HTML so it can't call React state
+  // directly — window is the only bridge available.
+  const setForecastModalRef = useRef(setForecastModal)
+  setForecastModalRef.current = setForecastModal
+  useEffect(() => {
+    ;(window as unknown as Record<string, unknown>).swOpenForecastModal = (siteId: string) => {
+      api.siteDetail(siteId).then((d) => {
+        setForecastModalRef.current({ siteId, rows: d.forecast })
+      }).catch(() => undefined)
+    }
+    return () => { delete (window as unknown as Record<string, unknown>).swOpenForecastModal }
+  }, [])
 
   const [users, setUsers] = useState<UserOut[]>([])
   const [overview, setOverview] = useState<OverviewStats | null>(null)
@@ -280,6 +324,7 @@ export function MapPage() {
   const [currentStats, setCurrentStats] = useState<MapStats | null>(null)
   const [currentStatusRows, setCurrentStatusRows] = useState<CurrentStatusRow[]>([])
   const [forecastStats, setForecastStats] = useState<MapStats | null>(null)
+  const [pastStats, setPastStats] = useState<MapStats | null>(null)
   const [tool, setTool] = useState<DrawTool>('none')
   const [drawMenuOpen, setDrawMenuOpen] = useState(false)
   const [measureActive, setMeasureActive] = useState(false)
@@ -315,15 +360,10 @@ export function MapPage() {
   // / geoserver_buildings_layer).
   const [fixedLayers, setFixedLayers] = useState<{ substations_layer: string; buildings_layer: string } | null>(null)
 
-  // Genset-single and the power-draw check are inline panels anchored to
-  // the far right of the toolbar (so the map stays visible to click a
-  // site while the panel is open) rather than a centered modal —
-  // genset-bulk and CCTV stay modals since they're file-upload forms
-  // that don't need the map visible while filling them in.
-  const [activeToolPanel, setActiveToolPanel] = useState<'none' | 'genset-bulk' | 'cctv'>('none')
-  const [rightPanel, setRightPanel] = useState<'none' | 'genset-single' | 'bitcoin'>('none')
+  // Unified tool drawer — right-side panel on desktop, bottom sheet on mobile
+  const [toolDrawer, setToolDrawer] = useState<'none' | 'genset' | 'cctv' | 'bitcoin'>('none')
+  const [gensetTab, setGensetTab] = useState<'single' | 'bulk'>('single')
 
-  const [gensetMenuOpen, setGensetMenuOpen] = useState(false)
   const [gensetSiteId, setGensetSiteId] = useState('')
   const [gensetPickMode, setGensetPickMode] = useState(false)
   const [gensetPickedLatLng, setGensetPickedLatLng] = useState<[number, number] | null>(null)
@@ -338,10 +378,18 @@ export function MapPage() {
   const [cctvOffsets, setCctvOffsets] = useState('5,10')
   const [cctvStatus, setCctvStatus] = useState<string | null>(null)
   const [cctvResult, setCctvResult] = useState<CctvRunResult | null>(null)
+  // Default camera specs — editable in the drawer before running
+  const [cctvCameras, setCctvCameras] = useState([
+    { camera_type: 'Type A', hfov_deg: 90, range_m: 30, unit_price_rm: 500 },
+  ])
 
-  const [bitcoinSiteIds, setBitcoinSiteIds] = useState('')
-  const [bitcoinStatus, setBitcoinStatus] = useState<string | null>(null)
-  const [bitcoinResult, setBitcoinResult] = useState<{ buildingCount: number; nearestSubstation: string | null; nearestDistM: number | null } | null>(null)
+  // Bitcoin / illegal-mining power check
+  const [btcMode, setBtcMode] = useState<2 | 3>(2)
+  const [btcPickMode, setBtcPickMode] = useState(false)
+  const [btcSites, setBtcSites] = useState<{ site_id: string; lat: number; lng: number }[]>([])
+  const [btcSearch, setBtcSearch] = useState('')
+  const [btcStatus, setBtcStatus] = useState<string | null>(null)
+  const [btcResult, setBtcResult] = useState<{ buildingCount: number; radiusKm: number; substations: { name: string; distM: number }[] } | null>(null)
 
   function toggleLayer(key: keyof typeof layerToggles) {
     setLayerToggles((prev) => ({ ...prev, [key]: !prev[key] }))
@@ -369,6 +417,14 @@ export function MapPage() {
     api.overviewStats().then(setOverview).catch(() => undefined)
   }, [])
 
+  useEffect(() => {
+    api.availableWeeks().then((weeks) => {
+      setAvailableWeeks(weeks)
+      // Pre-select the most recent past week as the default for the past pane
+      if (weeks.length > 0) setPastKey(`${weeks[0].year}-${weeks[0].week}`)
+    }).catch(() => undefined)
+  }, [])
+
   // Single map (non-split mode)
   useEffect(() => {
     if (splitActive || !containerRef.current) return
@@ -382,7 +438,7 @@ export function MapPage() {
     map.addControl(new maplibregl.NavigationControl(), 'top-right')
 
     map.on('load', () => {
-      api.currentStatus().then((rows) => {
+      api.currentStatus(mapFilterYear ?? undefined, mapFilterWeek ?? undefined).then((rows) => {
         setCurrentStatusRows(rows)
         addStatusLayer(map, 'current-status', rows)
       }).catch(() => undefined)
@@ -447,56 +503,67 @@ export function MapPage() {
     }
   }, [splitActive])
 
-  // Split mode: left = current status, right = forecast
+  // Split mode: two-pane = CURRENT | FORECAST; three-pane = PAST | CURRENT | FORECAST
   useEffect(() => {
     if (!splitActive || !splitLeftRef.current || !splitRightRef.current) return
+    if (splitMode === 'three' && !splitMiddleRef.current) return
 
-    const left = new maplibregl.Map({
-      container: splitLeftRef.current,
+    const makeMap = (container: HTMLDivElement) => new maplibregl.Map({
+      container,
       style: getBaseStyle(),
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
     })
-    const right = new maplibregl.Map({
-      container: splitRightRef.current,
-      style: getBaseStyle(),
-      center: DEFAULT_CENTER,
-      zoom: DEFAULT_ZOOM,
-    })
+
+    const left = makeMap(splitLeftRef.current)
+    const middle = splitMode === 'three' ? makeMap(splitMiddleRef.current!) : null
+    const right = makeMap(splitRightRef.current)
+
     splitLeftMapRef.current = left
+    splitMiddleMapRef.current = middle
     splitRightMapRef.current = right
-    left.addControl(new maplibregl.NavigationControl(), 'top-right')
-    right.addControl(new maplibregl.NavigationControl(), 'top-right')
+
+    const allMaps = [left, middle, right].filter((m): m is maplibregl.Map => m !== null)
+    allMaps.forEach((m) => m.addControl(new maplibregl.NavigationControl(), 'top-right'))
 
     let syncing = false
-    const syncFrom = (source: maplibregl.Map, target: maplibregl.Map) => () => {
+    const syncFrom = (source: maplibregl.Map) => () => {
       if (syncing) return
       syncing = true
-      target.jumpTo({ center: source.getCenter(), zoom: source.getZoom() })
+      allMaps.filter((m) => m !== source).forEach((m) => m.jumpTo({ center: source.getCenter(), zoom: source.getZoom() }))
       syncing = false
     }
-    left.on('move', syncFrom(left, right))
-    right.on('move', syncFrom(right, left))
+    allMaps.forEach((m) => m.on('move', syncFrom(m)))
     left.on('moveend', () => setMapBounds(readBounds(left)))
 
-    left.on('load', () => {
-      api.currentStatus().then((rows) => addStatusLayer(left, 'split-current', rows)).catch(() => undefined)
-      setMapBounds(readBounds(left))
+    // In two-pane: left = current, right = forecast
+    // In three-pane: left = past, middle = current, right = forecast
+    const currentMap = splitMode === 'three' ? middle! : left
+    const pastMap = splitMode === 'three' ? left : null
+
+    if (pastMap) {
+      pastMap.on('load', () => {
+        api.currentStatus(pastYear, pastWeek).then((rows) => addStatusLayer(pastMap, 'split-past', rows)).catch(() => undefined)
+      })
+    }
+
+    currentMap.on('load', () => {
+      api.currentStatus().then((rows) => addStatusLayer(currentMap, 'split-current', rows)).catch(() => undefined)
+      setMapBounds(readBounds(currentMap))
     })
     right.on('load', () => {
-      api
-        .forecastStatus(forecastYear, forecastWeek)
+      api.forecastStatus(forecastYear, forecastWeek)
         .then((rows) => addStatusLayer(right, 'split-forecast', rows))
         .catch(() => undefined)
     })
 
     return () => {
-      left.remove()
-      right.remove()
+      allMaps.forEach((m) => m.remove())
       splitLeftMapRef.current = null
+      splitMiddleMapRef.current = null
       splitRightMapRef.current = null
     }
-  }, [splitActive])
+  }, [splitMode])
 
   // Refresh forecast layer when quarter/year changes
   useEffect(() => {
@@ -507,6 +574,15 @@ export function MapPage() {
       .then((rows) => addStatusLayer(right, 'split-forecast', rows))
       .catch(() => undefined)
   }, [forecastYear, forecastWeek, splitActive])
+
+  // Refresh past layer when past year/week changes
+  useEffect(() => {
+    const pastMap = splitMode === 'three' ? splitLeftMapRef.current : null
+    if (!pastMap) return
+    api.currentStatus(pastYear, pastWeek)
+      .then((rows) => addStatusLayer(pastMap, 'split-past', rows))
+      .catch(() => undefined)
+  }, [pastYear, pastWeek, splitMode])
 
   // Bounds-scoped current stats, for the tab beneath the map
   useEffect(() => {
@@ -522,6 +598,15 @@ export function MapPage() {
       .then(setForecastStats)
       .catch(() => setForecastStats(null))
   }, [mapBounds, splitActive, forecastYear, forecastWeek])
+
+  // Past stats — only relevant in triple split mode
+  useEffect(() => {
+    if (!mapBounds || splitMode !== 'three') return
+    api
+      .mapStats(mapBounds, pastYear, pastWeek)
+      .then(setPastStats)
+      .catch(() => setPastStats(null))
+  }, [mapBounds, splitMode, pastYear, pastWeek])
 
   // Render newly created annotations as they're saved, accumulating across
   // the session so the map fills up as the user keeps drawing
@@ -1112,10 +1197,7 @@ export function MapPage() {
       const offsets = cctvOffsets.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n))
       const result = await api.cctvRun({
         building, parking, poles,
-        cameras: [
-          { camera_type: 'PTZ', hfov_deg: 90, range_m: 50, unit_price_rm: 3500 },
-          { camera_type: 'Fixed', hfov_deg: 60, range_m: 30, unit_price_rm: 1800 },
-        ],
+        cameras: cctvCameras,
         offsets: offsets.length > 0 ? offsets : [5],
       })
       setCctvResult(result)
@@ -1125,79 +1207,183 @@ export function MapPage() {
     }
   }
 
-  // Illegal Bitcoin-mining detection: triangulate a buffer from 2-3
-  // selected sites, then check our own GeoServer-published
-  // buildings/substations layers for anything nearby — the theory
-  // (ported from the legacy app's agent.py framing) being that heavy,
-  // unexplained congestion near a substation can indicate
-  // unauthorized power draw. Unlike the legacy app, which queried the
-  // public Overpass API directly from the browser with real site
-  // coordinates, this stays entirely within our own infrastructure.
-  async function runBitcoinMining() {
-    const ids = bitcoinSiteIds.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
-    if (ids.length < 2 || ids.length > 3) {
-      setBitcoinStatus('Select 2 or 3 site IDs (comma-separated)')
+  // Map click handler for Bitcoin power-check: clicks on plotted site circles only
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !btcPickMode) return
+    const canvas = map.getCanvas()
+    const setCursor = () => { canvas.style.cursor = 'crosshair' }
+    const unsetCursor = () => { canvas.style.cursor = '' }
+    setCursor()
+    function handleClick(e: maplibregl.MapMouseEvent) {
+      // Only register clicks on actual site markers, not empty map
+      const features = map.queryRenderedFeatures(e.point, { layers: ['current-status-point'] })
+      if (!features.length) return
+      const props = features[0].properties as { site_id: string }
+      const row = currentStatusRows.find((r) => r.site_id === props.site_id)
+      if (!row || row.latitude == null || row.longitude == null) return
+      const site = { site_id: row.site_id, lat: row.latitude, lng: row.longitude }
+      setBtcSites((prev) => {
+        if (prev.length >= btcMode) return prev
+        if (prev.some((s) => s.site_id === site.site_id)) return prev
+        const next = [...prev, site]
+        if (next.length >= btcMode) setBtcPickMode(false)
+        return next
+      })
+    }
+    map.on('click', handleClick)
+    return () => {
+      map.off('click', handleClick)
+      unsetCursor()
+    }
+  }, [btcPickMode, btcMode, currentStatusRows])
+
+  // Draw selected sites + connecting line/polygon + centroid + buffer on map
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+
+    // Haversine in km
+    function hav(lat1: number, lon1: number, lat2: number, lon2: number) {
+      const R = 6371, dLat = (lat2 - lat1) * Math.PI / 180, dLon = (lon2 - lon1) * Math.PI / 180
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2
+      return R * 2 * Math.asin(Math.sqrt(a))
+    }
+    // Approximate circle polygon (64 pts), radius in km
+    function circlePolygon(lat: number, lng: number, radiusKm: number): [number, number][] {
+      const coords: [number, number][] = []
+      for (let i = 0; i <= 64; i++) {
+        const a = (i / 64) * 2 * Math.PI
+        const dLat = (radiusKm / 6371) * (180 / Math.PI) * Math.cos(a)
+        const dLng = (radiusKm / 6371) * (180 / Math.PI) * Math.sin(a) / Math.cos(lat * Math.PI / 180)
+        coords.push([lng + dLng, lat + dLat])
+      }
+      return coords
+    }
+
+    const apply = () => {
+      // Site pin highlights
+      const pinData: FeatureCollection = {
+        type: 'FeatureCollection',
+        features: btcSites.map((s) => ({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [s.lng, s.lat] },
+          properties: { site_id: s.site_id },
+        })),
+      }
+      const pinSrc = map.getSource('btc-pins') as maplibregl.GeoJSONSource | undefined
+      if (pinSrc) { pinSrc.setData(pinData) } else {
+        map.addSource('btc-pins', { type: 'geojson', data: pinData })
+        map.addLayer({ id: 'btc-pins-ring', type: 'circle', source: 'btc-pins', paint: { 'circle-radius': 11, 'circle-color': 'transparent', 'circle-stroke-width': 3, 'circle-stroke-color': '#f59e0b' } })
+      }
+
+      if (btcSites.length < 2) {
+        // Clear geometry layers when < 2 sites
+        const empty: FeatureCollection = { type: 'FeatureCollection', features: [] };
+        ['btc-line', 'btc-buffer', 'btc-centroid'].forEach((id) => {
+          const src = map.getSource(id) as maplibregl.GeoJSONSource | undefined
+          if (src) src.setData(empty)
+        })
+        return
+      }
+
+      const cLat = btcSites.reduce((s, p) => s + p.lat, 0) / btcSites.length
+      const cLng = btcSites.reduce((s, p) => s + p.lng, 0) / btcSites.length
+      const maxDistKm = Math.max(...btcSites.map((s) => hav(s.lat, s.lng, cLat, cLng)))
+      const bufferKm = Math.max(maxDistKm, 0.1) // min 100m
+
+      // Line (2 sites) or filled polygon (3 sites)
+      const lineCoords = btcSites.map((s) => [s.lng, s.lat])
+      const lineData: FeatureCollection = {
+        type: 'FeatureCollection',
+        features: [{
+          type: 'Feature',
+          geometry: btcSites.length === 2
+            ? { type: 'LineString', coordinates: lineCoords }
+            : { type: 'Polygon', coordinates: [[...lineCoords, lineCoords[0]]] },
+          properties: {},
+        }],
+      }
+      const lineSrc = map.getSource('btc-line') as maplibregl.GeoJSONSource | undefined
+      if (lineSrc) { lineSrc.setData(lineData) } else {
+        map.addSource('btc-line', { type: 'geojson', data: lineData })
+        map.addLayer({ id: 'btc-line-fill', type: 'fill', source: 'btc-line', filter: ['==', ['geometry-type'], 'Polygon'], paint: { 'fill-color': '#eab308', 'fill-opacity': 0.06 } })
+        map.addLayer({ id: 'btc-line-stroke', type: 'line', source: 'btc-line', paint: { 'line-color': '#eab308', 'line-width': 2, 'line-dasharray': [6, 4] } })
+      }
+
+      // Buffer circle
+      const bufData: FeatureCollection = {
+        type: 'FeatureCollection',
+        features: [{ type: 'Feature', geometry: { type: 'Polygon', coordinates: [circlePolygon(cLat, cLng, bufferKm)] }, properties: {} }],
+      }
+      const bufSrc = map.getSource('btc-buffer') as maplibregl.GeoJSONSource | undefined
+      if (bufSrc) { bufSrc.setData(bufData) } else {
+        map.addSource('btc-buffer', { type: 'geojson', data: bufData })
+        map.addLayer({ id: 'btc-buffer-fill', type: 'fill', source: 'btc-buffer', paint: { 'fill-color': '#16a34a', 'fill-opacity': 0.06 } })
+        map.addLayer({ id: 'btc-buffer-line', type: 'line', source: 'btc-buffer', paint: { 'line-color': '#16a34a', 'line-width': 1.5, 'line-dasharray': [4, 4] } })
+      }
+
+      // Centroid diamond marker
+      const centData: FeatureCollection = {
+        type: 'FeatureCollection',
+        features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [cLng, cLat] }, properties: {} }],
+      }
+      const centSrc = map.getSource('btc-centroid') as maplibregl.GeoJSONSource | undefined
+      if (centSrc) { centSrc.setData(centData) } else {
+        map.addSource('btc-centroid', { type: 'geojson', data: centData })
+        map.addLayer({ id: 'btc-centroid-circle', type: 'circle', source: 'btc-centroid', paint: { 'circle-radius': 7, 'circle-color': '#16a34a', 'circle-stroke-width': 2.5, 'circle-stroke-color': '#fff' } })
+      }
+    }
+    if (map.isStyleLoaded()) apply(); else map.once('load', apply)
+  }, [btcSites])
+
+  // Illegal power-draw check: centroid + max-dist buffer → query GeoServer layers
+  async function runBtcAnalysis() {
+    if (btcSites.length < btcMode) {
+      setBtcStatus(`Select ${btcMode} sites first`)
       return
     }
     if (!fixedLayers) {
-      setBitcoinStatus('GeoServer layer configuration not loaded yet — try again in a moment')
+      setBtcStatus('GeoServer layer configuration not loaded yet')
       return
     }
-    setBitcoinResult(null)
-    setBitcoinStatus('Looking up sites…')
+    setBtcResult(null)
+    setBtcStatus('Querying nearby buildings and substations…')
+    const cLat = btcSites.reduce((s, p) => s + p.lat, 0) / btcSites.length
+    const cLng = btcSites.reduce((s, p) => s + p.lng, 0) / btcSites.length
+    const maxDistM = Math.max(...btcSites.map((s) => haversineDistanceMeters([cLng, cLat], [s.lng, s.lat])))
+    const radiusM = Math.max(maxDistM, 100)
     try {
-      const details = await Promise.all(ids.map((id) => api.siteDetail(id)))
-      const points = details.filter((d) => d.site).map((d) => [d.site!.latitude, d.site!.longitude] as [number, number])
-      if (points.length < 2) {
-        setBitcoinStatus('Could not resolve enough of those site IDs')
-        return
-      }
-      const centerLat = points.reduce((s, p) => s + p[0], 0) / points.length
-      const centerLng = points.reduce((s, p) => s + p[1], 0) / points.length
-      const radiusM = Math.max(...points.map((p) => haversineDistanceMeters([centerLng, centerLat], [p[1], p[0]]))) || 500
-
-      setBitcoinStatus('Querying nearby buildings and substations…')
       const [buildings, substations] = await Promise.all([
-        api.nearbyGeoserverFeatures(fixedLayers.buildings_layer, centerLat, centerLng, radiusM),
-        api.nearbyGeoserverFeatures(fixedLayers.substations_layer, centerLat, centerLng, radiusM * 3),
+        api.nearbyGeoserverFeatures(fixedLayers.buildings_layer, cLat, cLng, radiusM),
+        api.nearbyGeoserverFeatures(fixedLayers.substations_layer, cLat, cLng, radiusM * 3),
       ])
-
-      let nearestSubstation: string | null = null
-      let nearestDistM: number | null = null
-      for (const sub of substations) {
-        const dist = haversineDistanceMeters([centerLng, centerLat], [sub.lng, sub.lat])
-        if (nearestDistM === null || dist < nearestDistM) {
-          nearestDistM = dist
-          nearestSubstation = sub.name
-        }
-      }
-      setBitcoinResult({ buildingCount: buildings.length, nearestSubstation, nearestDistM })
-      setBitcoinStatus(
+      const subsWithDist = substations
+        .map((sub) => ({ name: sub.name, distM: haversineDistanceMeters([cLng, cLat], [sub.lng, sub.lat]) }))
+        .sort((a, b) => a.distM - b.distM)
+      setBtcResult({ buildingCount: buildings.length, radiusKm: radiusM / 1000, substations: subsWithDist.slice(0, 5) })
+      setBtcStatus(
         buildings.length === 0 && substations.length === 0
-          ? `No data on layers "${fixedLayers.buildings_layer}"/"${fixedLayers.substations_layer}" yet — publish them in GeoServer to use this tool`
-          : `${buildings.length} candidate building(s) found within ${fmtDistance(radiusM)} of the triangulated center`,
+          ? `No data on layers "${fixedLayers.buildings_layer}"/"${fixedLayers.substations_layer}" — publish them in GeoServer`
+          : `${buildings.length} flagged building(s) within ${fmtDistance(radiusM)} of centroid`,
       )
-
       const map = mapRef.current
       if (map) {
+        const plotData: FeatureCollection = {
+          type: 'FeatureCollection',
+          features: buildings.map((b) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [b.lng, b.lat] }, properties: {} })),
+        }
         const apply = () => {
-          const data: FeatureCollection = {
-            type: 'FeatureCollection',
-            features: buildings.map((b) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [b.lng, b.lat] }, properties: {} })),
-          }
-          const existing = map.getSource('bitcoin-buildings') as maplibregl.GeoJSONSource | undefined
-          if (existing) {
-            existing.setData(data)
-          } else {
-            map.addSource('bitcoin-buildings', { type: 'geojson', data })
-            map.addLayer({ id: 'bitcoin-buildings-circle', type: 'circle', source: 'bitcoin-buildings', paint: { 'circle-radius': 5, 'circle-color': '#dc2626' } })
+          const existing = map.getSource('btc-buildings') as maplibregl.GeoJSONSource | undefined
+          if (existing) { existing.setData(plotData) } else {
+            map.addSource('btc-buildings', { type: 'geojson', data: plotData })
+            map.addLayer({ id: 'btc-buildings-circle', type: 'circle', source: 'btc-buildings', paint: { 'circle-radius': 5, 'circle-color': '#dc2626', 'circle-stroke-width': 1.5, 'circle-stroke-color': '#fff' } })
           }
         }
-        if (map.isStyleLoaded()) apply()
-        else map.once('load', apply)
+        if (map.isStyleLoaded()) apply(); else map.once('load', apply)
       }
     } catch (e) {
-      setBitcoinStatus(e instanceof Error ? e.message : 'Bitcoin-mining lookup failed')
+      setBtcStatus(e instanceof Error ? e.message : 'Power-draw check failed')
     }
   }
 
@@ -1228,59 +1414,134 @@ export function MapPage() {
     else map.once('load', apply)
   }, [gensetResult, gensetBulkResults])
 
+  // Plot CCTV pipeline layers on map and zoom to AOI when result arrives
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !cctvResult) return
+    const apply = () => {
+      const layerDefs: { id: string; src: GeoJSON.FeatureCollection; type: 'fill' | 'line' | 'circle'; color: string; opacity: number }[] = [
+        { id: 'cctv-aoi', src: cctvResult.aoi, type: 'fill', color: '#60a5fa', opacity: 0.07 },
+        { id: 'cctv-buildings', src: cctvResult.dissolved_buildings, type: 'fill', color: '#a78bfa', opacity: 0.25 },
+        { id: 'cctv-surv', src: cctvResult.surv_area, type: 'fill', color: '#4ade80', opacity: 0.07 },
+        { id: 'cctv-hex', src: cctvResult.hex_grid, type: 'line', color: '#818cf8', opacity: 0.4 },
+        { id: 'cctv-wedge', src: cctvResult.wedge, type: 'fill', color: '#f97316', opacity: 0.25 },
+        { id: 'cctv-candidates', src: cctvResult.cand_cctv_clean, type: 'circle', color: '#f97316', opacity: 1 },
+      ]
+      for (const { id, src, type, color, opacity } of layerDefs) {
+        const existing = map.getSource(id) as maplibregl.GeoJSONSource | undefined
+        if (existing) { existing.setData(src); continue }
+        map.addSource(id, { type: 'geojson', data: src })
+        if (type === 'fill') map.addLayer({ id, type: 'fill', source: id, paint: { 'fill-color': color, 'fill-opacity': opacity } })
+        else if (type === 'line') map.addLayer({ id, type: 'line', source: id, paint: { 'line-color': color, 'line-width': 1, 'line-opacity': opacity } })
+        else map.addLayer({ id, type: 'circle', source: id, paint: { 'circle-radius': 5, 'circle-color': color, 'circle-stroke-width': 1.5, 'circle-stroke-color': '#fff' } })
+      }
+      // Zoom to AOI bounding box
+      const coords: [number, number][] = []
+      const collectCoords = (geom: GeoJSON.Geometry) => {
+        if (geom.type === 'Polygon') geom.coordinates.flat().forEach(([x, y]) => coords.push([x, y]))
+        else if (geom.type === 'MultiPolygon') geom.coordinates.flat(2).forEach(([x, y]) => coords.push([x, y]))
+      }
+      cctvResult.aoi.features.forEach((f) => f.geometry && collectCoords(f.geometry as GeoJSON.Geometry))
+      if (coords.length > 0) {
+        const lngs = coords.map(([x]) => x), lats = coords.map(([, y]) => y)
+        map.fitBounds([[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]], { padding: 60, duration: 800 })
+      }
+    }
+    if (map.isStyleLoaded()) apply()
+    else map.once('load', apply)
+  }, [cctvResult])
+
   return (
-    <div className="space-y-4">
-      <GlassPanel className="relative z-30 flex flex-wrap items-start gap-3">
-        <div>
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">View</p>
-          <button
-            onClick={() => setSplitActive((v) => !v)}
-            className={`rounded-xl px-4 py-2 text-sm font-semibold ${
-              splitActive ? 'bg-gradient-to-r from-sky-400 to-sky-500 text-ink-900' : 'border border-white/20 text-white/80'
-            }`}
-          >
-            {splitActive ? 'Split: Actual vs Forecast' : 'Single map'}
-          </button>
+    <div className="flex items-stretch gap-4">
+    <div className="min-w-0 flex-1 space-y-4">
+      <GlassPanel className="relative z-30 flex flex-wrap items-center gap-3">
+        {/* View mode icons: single / two-pane / three-pane */}
+        <div className="flex items-center gap-1 rounded-xl border border-white/15 p-1">
+          {([
+            { mode: 'none' as const, title: 'Single map',
+              icon: <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="18" rx="2"/></svg> },
+            { mode: 'two' as const, title: 'Split: Current vs Forecast',
+              icon: <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="9" height="18" rx="1.5"/><rect x="13" y="3" width="9" height="18" rx="1.5"/></svg> },
+            { mode: 'three' as const, title: 'Split: Past vs Current vs Forecast',
+              icon: <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="3" width="6" height="18" rx="1.5"/><rect x="9" y="3" width="6" height="18" rx="1.5"/><rect x="17" y="3" width="6" height="18" rx="1.5"/></svg> },
+          ] as const).map(({ mode, title, icon }) => (
+            <button
+              key={mode}
+              title={title}
+              onClick={() => setSplitMode(mode)}
+              className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+                splitMode === mode ? 'bg-sky-400 text-ink-900' : 'text-white/60 hover:text-white'
+              }`}
+            >
+              {icon}
+            </button>
+          ))}
         </div>
 
+        {/* Timeline filter — always visible; label changes by mode */}
+        {!splitActive && availableWeeks.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-white/40">Week</span>
+            <select
+              value={mapFilterKey}
+              onChange={(e) => {
+                setMapFilterKey(e.target.value)
+                const f = parseKey(e.target.value)
+                const map = mapRef.current
+                if (!map) return
+                api.currentStatus(f?.year, f?.week).then((rows) => {
+                  setCurrentStatusRows(rows)
+                  addStatusLayer(map, 'current-status', rows)
+                }).catch(() => undefined)
+              }}
+              className="rounded-xl border border-white/20 bg-ink-900 px-2.5 py-1.5 text-xs text-white/80 focus:border-sky-400/60 focus:outline-none"
+            >
+              <option value="latest">Latest</option>
+              {availableWeeks.map(({ year, week }) => (
+                <option key={`${year}-${week}`} value={`${year}-${week}`}>
+                  {year} W{String(week).padStart(2, '0')}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {splitMode === 'three' && availableWeeks.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-white/40">Past</span>
+            <select
+              value={pastKey}
+              onChange={(e) => setPastKey(e.target.value)}
+              className="rounded-xl border border-white/20 bg-ink-900 px-2.5 py-1.5 text-xs text-white/80 focus:border-sky-400/60 focus:outline-none"
+            >
+              {availableWeeks.map(({ year, week }) => (
+                <option key={`${year}-${week}`} value={`${year}-${week}`}>
+                  {year} W{String(week).padStart(2, '0')}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {splitActive && (
-          <>
-            <div>
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
-                Forecast year
-              </label>
-              <input
-                type="number"
-                value={forecastYear}
-                onChange={(e) => setForecastYear(Number(e.target.value))}
-                className="w-24 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
-              />
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-white/40">Forecast</span>
+            <input type="number" value={forecastYear} onChange={(e) => setForecastYear(Number(e.target.value))}
+              className="w-16 rounded-xl border border-white/20 bg-ink-900 px-2.5 py-1.5 text-xs text-white/80 focus:border-sky-400/60 focus:outline-none" />
+            <div className="flex gap-0.5 rounded-xl border border-white/20 bg-ink-900 p-0.5">
+              {QUARTER_WEEKS.map((w, i) => (
+                <button key={w} onClick={() => setForecastWeek(w)}
+                  className={`rounded-lg px-2 py-1 text-[10px] font-semibold transition-colors ${forecastWeek === w ? 'bg-accent-400 text-ink-900' : 'text-white/55 hover:text-white'}`}>
+                  Q{i + 1}
+                </button>
+              ))}
             </div>
-            <div>
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
-                Quarter
-              </label>
-              <div className="flex gap-1">
-                {QUARTER_WEEKS.map((w, i) => (
-                  <button
-                    key={w}
-                    onClick={() => setForecastWeek(w)}
-                    className={`rounded-lg px-2.5 py-2 text-xs font-semibold ${
-                      forecastWeek === w ? 'bg-accent-400 text-ink-900' : 'border border-white/20 text-white/70'
-                    }`}
-                  >
-                    Q{i + 1}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </>
+          </div>
         )}
 
         {!splitActive && (
           <>
-            <div className="relative z-30 flex flex-col items-center">
-              <p className="mb-1 whitespace-nowrap text-[10px] font-semibold uppercase tracking-wider text-white/45">Draw</p>
+            <div className="relative z-30">
               <button
                 onClick={() => {
                   setDrawMenuOpen((v) => !v)
@@ -1319,25 +1580,16 @@ export function MapPage() {
                 </div>
               )}
             </div>
-            <div className="flex flex-col items-center">
-              <p className="mb-1 whitespace-nowrap text-[10px] font-semibold uppercase tracking-wider text-white/45">&nbsp;</p>
-              {tool !== 'none' ? (
-                <button
-                  onClick={() => {
-                    setTool('none')
-                    setDraftPoints([])
-                  }}
-                  className="h-9 rounded-xl border border-white/20 px-3 text-xs font-semibold text-white/70"
-                >
-                  Cancel draw
-                </button>
-              ) : (
-                <div className="h-9" />
-              )}
-            </div>
+            {tool !== 'none' && (
+              <button
+                onClick={() => { setTool('none'); setDraftPoints([]) }}
+                className="h-9 rounded-xl border border-white/20 px-3 text-xs font-semibold text-white/70"
+              >
+                Cancel draw
+              </button>
+            )}
 
-            <div className="flex flex-col items-center">
-              <p className="mb-1 whitespace-nowrap text-[10px] font-semibold uppercase tracking-wider text-white/45">Measure</p>
+            <div>
               <button
                 onClick={() => {
                   if (!measureActive) {
@@ -1359,71 +1611,37 @@ export function MapPage() {
               </button>
             </div>
 
-            <div className="relative z-30 flex flex-col items-center">
-              <p className="mb-1 whitespace-nowrap text-[10px] font-semibold uppercase tracking-wider text-white/45">Genset</p>
-              <button
-                onClick={() => {
-                  setGensetMenuOpen((v) => !v)
-                  setDrawMenuOpen(false)
-                }}
-                title="Genset/substation routing"
-                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 text-white/80"
-              >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M13 2 3 14h7l-1 8 11-12h-7l1-8z" />
-                </svg>
-              </button>
-              {gensetMenuOpen && (
-                <div className="absolute left-0 top-full z-30 mt-2 w-36 rounded-2xl border border-white/15 bg-ink-900/95 p-2 text-xs backdrop-blur-xl">
-                  <button
-                    onClick={() => {
-                      setRightPanel('genset-single')
-                      setGensetMenuOpen(false)
-                    }}
-                    className="block w-full rounded-lg px-2.5 py-1.5 text-left text-white/80 hover:bg-white/10"
-                  >
-                    Single site
-                  </button>
-                  <button
-                    onClick={() => {
-                      setActiveToolPanel('genset-bulk')
-                      setGensetMenuOpen(false)
-                    }}
-                    className="block w-full rounded-lg px-2.5 py-1.5 text-left text-white/80 hover:bg-white/10"
-                  >
-                    Bulk (xlsx/csv)
-                  </button>
-                </div>
-              )}
-            </div>
+            <button
+              onClick={() => setToolDrawer((v) => (v === 'genset' ? 'none' : 'genset'))}
+              title="Genset/substation routing"
+              className={`flex h-9 w-9 items-center justify-center rounded-xl border text-white/80 ${toolDrawer === 'genset' ? 'border-amber-400/60 bg-amber-400/10' : 'border-white/20'}`}
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M13 2 3 14h7l-1 8 11-12h-7l1-8z" />
+              </svg>
+            </button>
 
-            <div className="flex flex-col items-center">
-              <p className="mb-1 whitespace-nowrap text-[10px] font-semibold uppercase tracking-wider text-white/45">CCTV</p>
-              <button
-                onClick={() => setActiveToolPanel('cctv')}
-                title="CCTV camera planning"
-                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 text-white/80"
-              >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="7" width="13" height="10" rx="2" />
-                  <path d="M16 10.5 21 7v10l-5-3.5" />
-                </svg>
-              </button>
-            </div>
+            <button
+              onClick={() => setToolDrawer((v) => (v === 'cctv' ? 'none' : 'cctv'))}
+              title="CCTV camera planning"
+              className={`flex h-9 w-9 items-center justify-center rounded-xl border text-white/80 ${toolDrawer === 'cctv' ? 'border-emerald-400/60 bg-emerald-400/10' : 'border-white/20'}`}
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="7" width="13" height="10" rx="2" />
+                <path d="M16 10.5 21 7v10l-5-3.5" />
+              </svg>
+            </button>
 
-            <div className="flex flex-col items-center">
-              <p className="mb-1 whitespace-nowrap text-[10px] font-semibold uppercase tracking-wider text-white/45">Power check</p>
-              <button
-                onClick={() => setRightPanel((v) => (v === 'bitcoin' ? 'none' : 'bitcoin'))}
-                title="Unauthorized power-draw check"
-                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 text-white/80"
-              >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M9.5 9h2l-1 3h2l-2.5 4M14.5 9h-1" />
-                </svg>
-              </button>
-            </div>
+            <button
+              onClick={() => setToolDrawer((v) => (v === 'bitcoin' ? 'none' : 'bitcoin'))}
+              title="Unauthorized power-draw check"
+              className={`flex h-9 w-9 items-center justify-center rounded-xl border text-white/80 ${toolDrawer === 'bitcoin' ? 'border-sky-400/60 bg-sky-400/10' : 'border-white/20'}`}
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M9.5 9h2l-1 3h2l-2.5 4M14.5 9h-1" />
+              </svg>
+            </button>
             {(tool === 'line' || tool === 'polygon') && (
               <button
                 onClick={finishDraft}
@@ -1433,149 +1651,26 @@ export function MapPage() {
               </button>
             )}
 
-            {/* Far-right zone: measure results, and the Genset single-site
-                /power-draw-check inline panels — inline rather than a
-                centered modal so the map stays visible to click a site. */}
-            <div className="ml-auto flex items-end gap-3">
+            {/* Far-right zone: measure results and Genset single-site panel */}
+            <div className="ml-auto flex items-center gap-3">
               {measureActive && (
-                <div>
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">&nbsp;</p>
-                  <button
-                    onClick={() => setMeasurePoints([])}
-                    className="h-9 rounded-xl border border-white/20 px-3 text-xs font-semibold text-white/70"
-                  >
-                    Clear points
-                  </button>
-                </div>
+                <button
+                  onClick={() => setMeasurePoints([])}
+                  className="h-9 rounded-xl border border-white/20 px-3 text-xs font-semibold text-white/70"
+                >
+                  Clear points
+                </button>
               )}
               {measurePoints.length >= 2 && (
-                <div>
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">&nbsp;</p>
-                  <div className="flex h-9 items-center rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 text-xs">
-                    <span className="text-white/55">Total distance </span>
-                    <span className="ml-1 font-semibold text-sky-300">
-                      {fmtDistance(measurePoints.slice(1).reduce((sum, p, i) => sum + haversineDistanceMeters(measurePoints[i], p), 0))}
-                    </span>
-                  </div>
+                <div className="flex h-9 items-center rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 text-xs">
+                  <span className="text-white/55">Total distance </span>
+                  <span className="ml-1 font-semibold text-sky-300">
+                    {fmtDistance(measurePoints.slice(1).reduce((sum, p, i) => sum + haversineDistanceMeters(measurePoints[i], p), 0))}
+                  </span>
                 </div>
               )}
 
-              {rightPanel === 'genset-single' && (
-                <div className="w-72">
-                  <div className="mb-1 flex items-center justify-between">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-white/45">Genset — single site</p>
-                    <button
-                      onClick={() => {
-                        setRightPanel('none')
-                        setGensetResult(null)
-                        setGensetStatus(null)
-                        setGensetPickMode(false)
-                        setGensetPickedLatLng(null)
-                      }}
-                      className="text-white/40 hover:text-white"
-                    >
-                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M6 6l12 12M18 6 6 18" />
-                      </svg>
-                    </button>
-                  </div>
-                  <div className="rounded-xl border border-white/15 bg-white/5 p-3">
-                    <div className="mb-2 flex gap-1.5">
-                      <button
-                        onClick={() => {
-                          setGensetPickMode((v) => !v)
-                          setGensetPickedLatLng(null)
-                        }}
-                        className={`flex-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold ${
-                          gensetPickMode ? 'bg-sky-400 text-ink-900' : 'border border-white/20 text-white/70'
-                        }`}
-                      >
-                        {gensetPickMode ? 'Click a point…' : 'Click site on map'}
-                      </button>
-                      {gensetPickedLatLng && (
-                        <button onClick={() => setGensetPickedLatLng(null)} className="rounded-lg border border-white/20 px-2.5 py-1.5 text-xs font-semibold text-white/70">
-                          Clear
-                        </button>
-                      )}
-                    </div>
-                    {gensetPickedLatLng ? (
-                      <p className="mb-2 rounded-lg bg-white/5 px-2.5 py-1.5 text-xs text-white/70">
-                        Pinned: {gensetPickedLatLng[0].toFixed(5)}, {gensetPickedLatLng[1].toFixed(5)}
-                      </p>
-                    ) : (
-                      <input
-                        value={gensetSiteId}
-                        onChange={(e) => setGensetSiteId(e.target.value)}
-                        placeholder="Or search by site ID — e.g. N00377"
-                        className="mb-2 w-full rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs focus:border-sky-400/60 focus:outline-none"
-                      />
-                    )}
-                    <button
-                      onClick={runGenset}
-                      className="mb-2 w-full rounded-lg bg-gradient-to-r from-accent-400 to-accent-500 px-3 py-1.5 text-xs font-semibold text-ink-900"
-                    >
-                      Find route
-                    </button>
-                    {gensetStatus && <p className="mb-1.5 text-[11px] text-white/60">{gensetStatus}</p>}
-                    {gensetResult && gensetResult.results.length > 0 && (
-                      <ul className="max-h-32 space-y-1 overflow-y-auto text-[11px]">
-                        {gensetResult.results.map((r) => (
-                          <li key={r.osm_id} className="rounded-lg bg-white/5 px-2 py-1">
-                            <span className="font-semibold">{r.name}</span>
-                            <span className="text-white/55"> — {r.road_dist_km} km</span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </div>
-              )}
 
-              {rightPanel === 'bitcoin' && (
-                <div className="w-72">
-                  <div className="mb-1 flex items-center justify-between">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-white/45">Power-draw check</p>
-                    <button
-                      onClick={() => {
-                        setRightPanel('none')
-                        setBitcoinResult(null)
-                        setBitcoinStatus(null)
-                      }}
-                      className="text-white/40 hover:text-white"
-                    >
-                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M6 6l12 12M18 6 6 18" />
-                      </svg>
-                    </button>
-                  </div>
-                  <div className="rounded-xl border border-white/15 bg-white/5 p-3">
-                    <input
-                      value={bitcoinSiteIds}
-                      onChange={(e) => setBitcoinSiteIds(e.target.value)}
-                      placeholder="2-3 site IDs, comma-separated"
-                      className="mb-2 w-full rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs focus:border-sky-400/60 focus:outline-none"
-                    />
-                    <button
-                      onClick={runBitcoinMining}
-                      className="mb-2 w-full rounded-lg bg-gradient-to-r from-accent-400 to-accent-500 px-3 py-1.5 text-xs font-semibold text-ink-900"
-                    >
-                      Check
-                    </button>
-                    {bitcoinStatus && <p className="mb-1.5 text-[11px] text-white/60">{bitcoinStatus}</p>}
-                    {bitcoinResult && (
-                      <div className="rounded-lg bg-white/5 px-2.5 py-1.5 text-[11px]">
-                        <p>Buildings: <span className="font-semibold">{bitcoinResult.buildingCount}</span></p>
-                        {bitcoinResult.nearestSubstation && (
-                          <p>
-                            Nearest sub: <span className="font-semibold">{bitcoinResult.nearestSubstation}</span>
-                            {bitcoinResult.nearestDistM != null && ` (${fmtDistance(bitcoinResult.nearestDistM)})`}
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
             </div>
           </>
         )}
@@ -1712,23 +1807,6 @@ export function MapPage() {
           </div>
         )}
 
-        {splitActive && (
-          <div className="grid h-[70vh] grid-cols-1 gap-3 md:grid-cols-2">
-            <div className="relative overflow-hidden rounded-3xl border border-white/15">
-              <div className="absolute left-2 top-2 z-10 rounded-lg bg-ink-950 px-2.5 py-1 text-xs font-semibold text-white/90">
-                Current status
-              </div>
-              <div ref={splitLeftRef} className="h-full w-full" />
-            </div>
-            <div className="relative overflow-hidden rounded-3xl border border-white/15">
-              <div className="absolute left-2 top-2 z-10 rounded-lg bg-ink-950 px-2.5 py-1 text-xs font-semibold text-white/90">
-                Forecast
-              </div>
-              <div ref={splitRightRef} className="h-full w-full" />
-            </div>
-          </div>
-        )}
-
         <GlassPanel>
           <p className="mb-3.5 font-display text-sm font-semibold">Network overview</p>
           <div className="space-y-2.5 text-sm">
@@ -1852,12 +1930,40 @@ export function MapPage() {
         </GlassPanel>
       </div>
 
+      {splitActive && (
+        <div className={`grid h-[70vh] gap-3 ${splitMode === 'three' ? 'grid-cols-3' : 'grid-cols-2'}`}>
+          {splitMode === 'three' && (
+            <div className="relative overflow-hidden rounded-3xl border border-white/15">
+              <div className="absolute left-2 top-2 z-10 rounded-lg bg-ink-950 px-2.5 py-1 text-xs font-semibold text-white/90">
+                Past ({pastKey ? pastKey.replace('-', ' W') : '—'})
+              </div>
+              <div ref={splitLeftRef} className="h-full w-full" />
+            </div>
+          )}
+          <div className="relative overflow-hidden rounded-3xl border border-white/15">
+            <div className="absolute left-2 top-2 z-10 rounded-lg bg-ink-950 px-2.5 py-1 text-xs font-semibold text-white/90">
+              {splitMode === 'three' ? 'Current' : 'Current status'}
+            </div>
+            <div ref={splitMode === 'three' ? splitMiddleRef : splitLeftRef} className="h-full w-full" />
+          </div>
+          <div className="relative overflow-hidden rounded-3xl border border-white/15">
+            <div className="absolute left-2 top-2 z-10 rounded-lg bg-ink-950 px-2.5 py-1 text-xs font-semibold text-white/90">
+              Forecast ({forecastYear} Q{QUARTER_WEEKS.indexOf(forecastWeek) + 1})
+            </div>
+            <div ref={splitRightRef} className="h-full w-full" />
+          </div>
+        </div>
+      )}
+
       {!splitActive && <MapStatsPanel title="Viewport stats" stats={currentStats} />}
 
       {splitActive && (
-        <div className="grid gap-4 md:grid-cols-2">
-          <MapStatsPanel title="Viewport stats — current" stats={currentStats} />
-          <MapStatsPanel title="Viewport stats — forecast" stats={forecastStats} />
+        <div className={`grid gap-4 ${splitMode === 'three' ? 'grid-cols-3' : 'grid-cols-2'}`}>
+          {splitMode === 'three' && (
+            <MapStatsPanel title="Viewport stats — past" stats={pastStats} compact />
+          )}
+          <MapStatsPanel title="Viewport stats — current" stats={currentStats} compact />
+          <MapStatsPanel title="Viewport stats — forecast" stats={forecastStats} compact />
         </div>
       )}
 
@@ -1968,146 +2074,506 @@ export function MapPage() {
         </div>
       )}
 
-      {activeToolPanel === 'genset-bulk' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/60 backdrop-blur-sm">
-          <GlassPanel className="w-full max-w-sm">
-            <p className="mb-1 font-display text-sm font-semibold">Genset/substation routing — bulk</p>
-            <p className="mb-3.5 text-[11px] text-white/40">
-              substations from {fixedLayers ? `"${fixedLayers.substations_layer}"` : 'GeoServer'}
+    </div>{/* end inner content column */}
+
+    {/* ── Tool panel — in-flow right column, no overlap ── */}
+    {toolDrawer !== 'none' && (
+      <GlassPanel className="flex w-80 shrink-0 flex-col overflow-hidden !p-0">
+          {/* Panel header */}
+          <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3">
+            <p className="font-display text-sm font-semibold">
+              {toolDrawer === 'genset' && 'Genset / Substation routing'}
+              {toolDrawer === 'cctv' && 'CCTV camera planning'}
+              {toolDrawer === 'bitcoin' && 'Unauthorized power-draw check'}
             </p>
-            <div className="mb-3">
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
-                Spreadsheet with a site_id column
-              </label>
-              <input
-                type="file"
-                accept=".xlsx,.xls,.csv"
-                onChange={(e) => setGensetBulkFile(e.target.files?.[0] ?? null)}
-                className="w-full text-xs text-white/70"
-              />
-              {gensetBulkFile && <p className="mt-0.5 text-[11px] text-emerald-300">{gensetBulkFile.name}</p>}
-            </div>
-            {gensetStatus && <p className="mb-3 text-xs text-white/70">{gensetStatus}</p>}
-            {gensetBulkResults.length > 0 && (
-              <div className="mb-3 max-h-48 overflow-y-auto rounded-xl bg-white/5">
-                <table className="w-full text-left text-xs">
-                  <thead className="sticky top-0 bg-ink-900/95 text-white/45">
-                    <tr>
-                      <th className="px-2.5 py-1.5">Site ID</th>
-                      <th className="px-2.5 py-1.5">Nearest substation</th>
-                      <th className="px-2.5 py-1.5">Distance</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {gensetBulkResults.map((r) => {
-                      const best = r.result?.results[0]
-                      return (
-                        <tr key={r.siteId} className="border-t border-white/5">
-                          <td className="px-2.5 py-1.5 font-semibold">{r.siteId}</td>
-                          <td className="px-2.5 py-1.5 text-white/70">{best ? best.name : r.error ?? '—'}</td>
-                          <td className="px-2.5 py-1.5 text-white/70">{best ? `${best.road_dist_km} km` : '—'}</td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+            <button
+              onClick={() => setToolDrawer('none')}
+              className="flex h-7 w-7 items-center justify-center rounded-lg text-white/40 hover:bg-white/10 hover:text-white"
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M6 6l12 12M18 6 6 18" />
+              </svg>
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4">
+
+            {/* ── GENSET ── */}
+            {toolDrawer === 'genset' && (
+              <div className="space-y-4">
+                {/* Pricing inputs */}
+                <div>
+                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-white/45">Cable pricing</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="mb-1 block text-[10px] text-white/45">Material (RM/100m)</label>
+                      <input
+                        type="number"
+                        value={matPer100m}
+                        onChange={(e) => setMatPer100m(Number(e.target.value))}
+                        className="w-full rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs focus:border-sky-400/60 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[10px] text-white/45">Engineering (RM/100m)</label>
+                      <input
+                        type="number"
+                        value={engPer100m}
+                        onChange={(e) => setEngPer100m(Number(e.target.value))}
+                        className="w-full rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs focus:border-sky-400/60 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tab switcher: Single / Bulk */}
+                <div className="flex rounded-xl border border-white/15 bg-white/5 p-0.5">
+                  {(['single', 'bulk'] as const).map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setGensetTab(t)}
+                      className={`flex-1 rounded-lg py-1.5 text-xs font-semibold transition-colors ${
+                        gensetTab === t ? 'bg-white/15 text-white' : 'text-white/50 hover:text-white/80'
+                      }`}
+                    >
+                      {t === 'single' ? 'Single site' : 'Bulk (xlsx/csv)'}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Single site */}
+                {gensetTab === 'single' && (
+                  <div className="space-y-2">
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={() => { setGensetPickMode((v) => !v); setGensetPickedLatLng(null) }}
+                        className={`flex-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold ${
+                          gensetPickMode ? 'bg-sky-400 text-ink-900' : 'border border-white/20 text-white/70'
+                        }`}
+                      >
+                        {gensetPickMode ? 'Click a point on map…' : 'Pick point on map'}
+                      </button>
+                      {gensetPickedLatLng && (
+                        <button onClick={() => setGensetPickedLatLng(null)} className="rounded-lg border border-white/20 px-2.5 py-1.5 text-xs text-white/60">
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                    {gensetPickedLatLng ? (
+                      <p className="rounded-lg bg-white/5 px-2.5 py-1.5 text-xs text-white/60">
+                        Pinned: {gensetPickedLatLng[0].toFixed(5)}, {gensetPickedLatLng[1].toFixed(5)}
+                      </p>
+                    ) : (
+                      <input
+                        value={gensetSiteId}
+                        onChange={(e) => setGensetSiteId(e.target.value)}
+                        placeholder="Or search by site ID — e.g. N00377"
+                        className="w-full rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs focus:border-sky-400/60 focus:outline-none"
+                      />
+                    )}
+                    <button
+                      onClick={runGenset}
+                      className="w-full rounded-lg bg-gradient-to-r from-accent-400 to-accent-500 px-3 py-2 text-xs font-semibold text-ink-900"
+                    >
+                      Find route
+                    </button>
+                    {gensetStatus && <p className="text-[11px] text-white/60">{gensetStatus}</p>}
+                    {gensetResult && gensetResult.results.length > 0 && (
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-white/45">
+                          {gensetResult.results.length} route{gensetResult.results.length !== 1 ? 's' : ''}
+                        </p>
+                        {gensetResult.results.map((r, i) => {
+                          const units = r.road_dist_m / 100
+                          const matCost = Math.round(units * matPer100m)
+                          const engCost = Math.round(units * engPer100m)
+                          const total = matCost + engCost
+                          return (
+                            <button
+                              key={r.osm_id}
+                              onClick={() => mapRef.current?.flyTo({ center: [r.lng, r.lat], zoom: 14, duration: 800 })}
+                              className="flex w-full flex-col rounded-lg bg-white/5 px-2.5 py-2 text-left hover:bg-white/10"
+                            >
+                              <div className="mb-1 flex w-full items-center justify-between">
+                                <span className="text-xs font-semibold text-sky-300">{i === 0 ? '★ ' : ''}{r.name}</span>
+                                <span className="text-xs font-semibold text-accent-400">{r.road_dist_km} km</span>
+                              </div>
+                              <div className="grid grid-cols-3 gap-1 text-[10px] text-white/45">
+                                <span>Material <span className="text-white/70">RM {matCost.toLocaleString()}</span></span>
+                                <span>Eng. <span className="text-white/70">RM {engCost.toLocaleString()}</span></span>
+                                <span>Total <span className="font-semibold text-emerald-300">RM {total.toLocaleString()}</span></span>
+                              </div>
+                            </button>
+                          )
+                        })}
+                        {/* Summary card — shortest route */}
+                        {(() => {
+                          const r = gensetResult.results[0]
+                          const units = r.road_dist_m / 100
+                          const mat = Math.round(units * matPer100m)
+                          const eng = Math.round(units * engPer100m)
+                          return (
+                            <div className="rounded-lg border border-accent-400/25 bg-accent-400/8 px-2.5 py-2 text-xs">
+                              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">Shortest route summary</p>
+                              <div className="flex justify-between"><span className="text-white/55">Distance</span><span className="font-semibold">{r.road_dist_km} km</span></div>
+                              <div className="flex justify-between"><span className="text-white/55">Material</span><span>RM {mat.toLocaleString()}</span></div>
+                              <div className="flex justify-between"><span className="text-white/55">Engineering</span><span>RM {eng.toLocaleString()}</span></div>
+                              <div className="mt-1 flex justify-between border-t border-white/10 pt-1"><span className="font-semibold text-white/55">Total</span><span className="font-semibold text-accent-400">RM {(mat + eng).toLocaleString()}</span></div>
+                            </div>
+                          )
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Bulk mode */}
+                {gensetTab === 'bulk' && (
+                  <div className="space-y-2">
+                    <p className="text-[10px] text-white/45">Substations from {fixedLayers ? `"${fixedLayers.substations_layer}"` : 'GeoServer'}</p>
+                    <div>
+                      <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
+                        Spreadsheet with a site_id column
+                      </label>
+                      <input
+                        type="file"
+                        accept=".xlsx,.xls,.csv"
+                        onChange={(e) => setGensetBulkFile(e.target.files?.[0] ?? null)}
+                        className="w-full text-xs text-white/70"
+                      />
+                      {gensetBulkFile && <p className="mt-0.5 text-[11px] text-emerald-300">{gensetBulkFile.name}</p>}
+                    </div>
+                    {gensetStatus && <p className="text-[11px] text-white/60">{gensetStatus}</p>}
+                    {gensetBulkResults.length > 0 && (
+                      <div className="max-h-48 overflow-y-auto rounded-xl bg-white/5">
+                        <table className="w-full text-left text-xs">
+                          <thead className="sticky top-0 bg-ink-900/95 text-white/45">
+                            <tr>
+                              <th className="px-2.5 py-1.5">Site</th>
+                              <th className="px-2.5 py-1.5">Nearest sub</th>
+                              <th className="px-2.5 py-1.5">km</th>
+                              <th className="px-2.5 py-1.5">Total RM</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {gensetBulkResults.map((r) => {
+                              const best = r.result?.results[0]
+                              const units = best ? best.road_dist_m / 100 : 0
+                              const total = best ? Math.round(units * (matPer100m + engPer100m)) : 0
+                              return (
+                                <tr key={r.siteId} className="border-t border-white/5">
+                                  <td className="px-2.5 py-1.5 font-semibold">{r.siteId}</td>
+                                  <td className="px-2.5 py-1.5 text-white/70">{best ? best.name : r.error ?? '—'}</td>
+                                  <td className="px-2.5 py-1.5 text-white/70">{best ? best.road_dist_km : '—'}</td>
+                                  <td className="px-2.5 py-1.5 text-emerald-300">{best ? total.toLocaleString() : '—'}</td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={runGensetBulk}
+                        className="flex-1 rounded-lg bg-gradient-to-r from-accent-400 to-accent-500 px-3 py-2 text-xs font-semibold text-ink-900"
+                      >
+                        Process file
+                      </button>
+                      {gensetBulkResults.length > 0 && (
+                        <button
+                          onClick={() => {
+                            const rows = ['Site ID,Nearest Substation,Road Distance (km),Material RM,Engineering RM,Total RM,Error']
+                            for (const r of gensetBulkResults) {
+                              const best = r.result?.results[0]
+                              if (best) {
+                                const units = best.road_dist_m / 100
+                                const mat = Math.round(units * matPer100m)
+                                const eng = Math.round(units * engPer100m)
+                                rows.push(`${r.siteId},"${best.name}",${best.road_dist_km},${mat},${eng},${mat + eng},`)
+                              } else {
+                                rows.push(`${r.siteId},,,,,${r.error ?? ''}`)
+                              }
+                            }
+                            const blob = new Blob([rows.join('\n')], { type: 'text/csv' })
+                            const a = document.createElement('a')
+                            a.href = URL.createObjectURL(blob)
+                            a.download = 'genset_routes.csv'
+                            a.click()
+                          }}
+                          className="rounded-lg border border-emerald-400/40 bg-emerald-400/10 px-3 py-2 text-xs font-semibold text-emerald-300"
+                        >
+                          Export CSV
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => {
-                  setActiveToolPanel('none')
-                  setGensetStatus(null)
-                  setGensetBulkResults([])
-                }}
-                className="rounded-xl border border-white/20 px-4 py-2 text-sm font-semibold text-white/70"
-              >
-                Close
-              </button>
-              <button
-                onClick={runGensetBulk}
-                className="rounded-xl bg-gradient-to-r from-accent-400 to-accent-500 px-4 py-2 text-sm font-semibold text-ink-900"
-              >
-                Process file
-              </button>
-            </div>
-          </GlassPanel>
-        </div>
-      )}
 
-      {activeToolPanel === 'cctv' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/60 backdrop-blur-sm">
-          <GlassPanel className="w-full max-w-sm">
-            <p className="mb-3.5 font-display text-sm font-semibold">CCTV camera planning</p>
-            {([
-              ['Building footprints (GeoJSON)', cctvBuildingFile, setCctvBuildingFile, 'cctv-building-input'],
-              ['Parking areas (GeoJSON)', cctvParkingFile, setCctvParkingFile, 'cctv-parking-input'],
-              ['Existing poles (GeoJSON)', cctvPolesFile, setCctvPolesFile, 'cctv-poles-input'],
-            ] as const).map(([label, file, setFile, inputId]) => (
-              <div key={label} className="mb-2.5">
-                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">{label}</label>
-                <input
-                  id={inputId}
-                  type="file"
-                  accept=".geojson,.json"
-                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                  className="hidden"
-                />
-                <label
-                  htmlFor={inputId}
-                  className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold ${
-                    file ? 'border-emerald-400/40 bg-emerald-400/10 text-emerald-300' : 'border-white/20 bg-white/5 text-white/80 hover:bg-white/10'
-                  }`}
-                >
-                  <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M12 16V4M7 9l5-5 5 5M5 20h14" />
-                  </svg>
-                  {file ? file.name : 'Choose file…'}
-                </label>
-              </div>
-            ))}
-            <div className="mb-3">
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
-                Setback offsets (meters, comma-separated)
-              </label>
-              <input
-                value={cctvOffsets}
-                onChange={(e) => setCctvOffsets(e.target.value)}
-                className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm focus:border-sky-400/60 focus:outline-none"
-              />
-            </div>
-            {cctvStatus && <p className="mb-3 text-xs text-white/70">{cctvStatus}</p>}
-            {cctvResult && cctvResult.camera_cost_summary.features.length > 0 && (
-              <ul className="mb-3 space-y-1 text-xs">
-                {cctvResult.camera_cost_summary.features.map((f, i) => (
-                  <li key={i} className="rounded-lg bg-white/5 px-2.5 py-1.5">
-                    <span className="font-semibold">{String(f.properties?.camera_type)}</span>
-                    <span className="text-white/55"> — {String(f.properties?.count)}× — {fmtCurrency(Number(f.properties?.total_cost_rm))}</span>
-                  </li>
+            {/* ── CCTV ── */}
+            {toolDrawer === 'cctv' && (
+              <div className="space-y-4">
+                {/* GeoJSON file uploads */}
+                {([
+                  ['Building footprints (GeoJSON)', cctvBuildingFile, setCctvBuildingFile, 'cctv-building-input2'],
+                  ['Parking areas (GeoJSON)', cctvParkingFile, setCctvParkingFile, 'cctv-parking-input2'],
+                  ['Existing poles (GeoJSON)', cctvPolesFile, setCctvPolesFile, 'cctv-poles-input2'],
+                ] as const).map(([label, file, setFile, inputId]) => (
+                  <div key={label}>
+                    <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">{label}</label>
+                    <input id={inputId} type="file" accept=".geojson,.json" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="hidden" />
+                    <label
+                      htmlFor={inputId}
+                      className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold ${
+                        file ? 'border-emerald-400/40 bg-emerald-400/10 text-emerald-300' : 'border-white/20 bg-white/5 text-white/80 hover:bg-white/10'
+                      }`}
+                    >
+                      <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 16V4M7 9l5-5 5 5M5 20h14" />
+                      </svg>
+                      {file ? file.name : 'Choose file…'}
+                    </label>
+                  </div>
                 ))}
-              </ul>
+
+                {/* Camera specs table */}
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-white/45">Camera specs</p>
+                    <button
+                      onClick={() => setCctvCameras((prev) => [...prev, { camera_type: `Type ${String.fromCharCode(65 + prev.length)}`, hfov_deg: 90, range_m: 30, unit_price_rm: 500 }])}
+                      className="rounded-lg border border-white/20 px-2 py-0.5 text-[10px] text-white/60 hover:bg-white/10"
+                    >
+                      + Add
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto rounded-xl border border-white/10">
+                    <table className="w-full text-left text-[11px]">
+                      <thead className="bg-white/5 text-[10px] text-white/45">
+                        <tr>
+                          <th className="px-2 py-1.5">Type</th>
+                          <th className="px-2 py-1.5">HFoV°</th>
+                          <th className="px-2 py-1.5">Range m</th>
+                          <th className="px-2 py-1.5">RM</th>
+                          <th className="px-2 py-1.5" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {cctvCameras.map((cam, i) => (
+                          <tr key={i} className="border-t border-white/8">
+                            <td className="px-1.5 py-1">
+                              <input value={cam.camera_type} onChange={(e) => setCctvCameras((prev) => prev.map((c, j) => j === i ? { ...c, camera_type: e.target.value } : c))}
+                                className="w-16 rounded bg-white/5 px-1.5 py-0.5 text-[11px] focus:outline-none focus:ring-1 focus:ring-sky-400/50" />
+                            </td>
+                            <td className="px-1.5 py-1">
+                              <input type="number" value={cam.hfov_deg} onChange={(e) => setCctvCameras((prev) => prev.map((c, j) => j === i ? { ...c, hfov_deg: Number(e.target.value) } : c))}
+                                className="w-12 rounded bg-white/5 px-1.5 py-0.5 text-[11px] focus:outline-none focus:ring-1 focus:ring-sky-400/50" />
+                            </td>
+                            <td className="px-1.5 py-1">
+                              <input type="number" value={cam.range_m} onChange={(e) => setCctvCameras((prev) => prev.map((c, j) => j === i ? { ...c, range_m: Number(e.target.value) } : c))}
+                                className="w-12 rounded bg-white/5 px-1.5 py-0.5 text-[11px] focus:outline-none focus:ring-1 focus:ring-sky-400/50" />
+                            </td>
+                            <td className="px-1.5 py-1">
+                              <input type="number" value={cam.unit_price_rm} onChange={(e) => setCctvCameras((prev) => prev.map((c, j) => j === i ? { ...c, unit_price_rm: Number(e.target.value) } : c))}
+                                className="w-16 rounded bg-white/5 px-1.5 py-0.5 text-[11px] focus:outline-none focus:ring-1 focus:ring-sky-400/50" />
+                            </td>
+                            <td className="px-1.5 py-1">
+                              {cctvCameras.length > 1 && (
+                                <button onClick={() => setCctvCameras((prev) => prev.filter((_, j) => j !== i))} className="text-white/30 hover:text-red-400">×</button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Offsets */}
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">Setback offsets (m, comma-separated)</label>
+                  <input
+                    value={cctvOffsets}
+                    onChange={(e) => setCctvOffsets(e.target.value)}
+                    className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs focus:border-sky-400/60 focus:outline-none"
+                  />
+                </div>
+
+                {cctvStatus && <p className="text-xs text-white/60">{cctvStatus}</p>}
+
+                {cctvResult && cctvResult.camera_cost_summary.features.length > 0 && (
+                  <div>
+                    <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/45">Results</p>
+                    <ul className="space-y-1 text-xs">
+                      {cctvResult.camera_cost_summary.features.map((f, i) => (
+                        <li key={i} className="rounded-lg bg-white/5 px-2.5 py-1.5">
+                          <span className="font-semibold">{String(f.properties?.camera_type)}</span>
+                          <span className="text-white/55"> — {String(f.properties?.count)}× — {fmtCurrency(Number(f.properties?.total_cost_rm))}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <button
+                  onClick={runCctv}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 py-2.5 text-sm font-semibold text-white hover:bg-emerald-400"
+                >
+                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+                  Run CCTV Pipeline
+                </button>
+              </div>
             )}
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => { setActiveToolPanel('none'); setCctvResult(null); setCctvStatus(null) }}
-                className="rounded-xl border border-white/20 px-4 py-2 text-sm font-semibold text-white/70"
-              >
-                Close
-              </button>
-              <button
-                onClick={runCctv}
-                className="flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-400"
-              >
-                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
-                  <path d="M8 5v14l11-7z" />
-                </svg>
-                Run CCTV Pipeline
-              </button>
-            </div>
-          </GlassPanel>
-        </div>
+
+            {/* ── POWER CHECK / BITCOIN ── */}
+            {toolDrawer === 'bitcoin' && (() => {
+              const SLOT_COLORS = ['#2563eb', '#f59e0b', '#7c3aed']
+              const searchResults = btcSearch.length >= 2
+                ? currentStatusRows.filter((r) => r.site_id.toLowerCase().includes(btcSearch.toLowerCase())).slice(0, 8)
+                : []
+              return (
+                <div className="space-y-4">
+                  <p className="text-xs text-white/55">
+                    Select {btcMode === 2 ? '2 sites to draw a line and find the midpoint' : '3 sites to draw a polygon and find the centroid'}. The buffer radius equals the max distance from the centroid to a selected site.
+                  </p>
+
+                  {/* Mode toggle */}
+                  <div>
+                    <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/45">Mode</p>
+                    <div className="flex rounded-xl border border-white/15 bg-white/5 p-0.5">
+                      {([2, 3] as const).map((m) => (
+                        <button key={m} onClick={() => { setBtcMode(m); setBtcSites([]); setBtcResult(null); setBtcStatus(null) }}
+                          className={`flex-1 rounded-lg py-1.5 text-xs font-semibold transition-colors ${btcMode === m ? 'bg-white/15 text-white' : 'text-white/50 hover:text-white/80'}`}>
+                          {m === 2 ? '2-site (line)' : '3-site (polygon)'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Search */}
+                  <div className="relative">
+                    <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/45">Search site</p>
+                    <input
+                      value={btcSearch}
+                      onChange={(e) => setBtcSearch(e.target.value)}
+                      placeholder="Site ID — e.g. N00377"
+                      className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs focus:border-sky-400/60 focus:outline-none"
+                    />
+                    {searchResults.length > 0 && (
+                      <div className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-xl border border-white/15 bg-ink-900/98 shadow-xl">
+                        {searchResults.map((r) => (
+                          <button
+                            key={r.site_id}
+                            onClick={() => {
+                              if (r.latitude == null || r.longitude == null) return
+                              const site = { site_id: r.site_id, lat: r.latitude, lng: r.longitude }
+                              setBtcSites((prev) => {
+                                if (prev.length >= btcMode || prev.some((s) => s.site_id === r.site_id)) return prev
+                                return [...prev, site]
+                              })
+                              setBtcSearch('')
+                            }}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-white/10"
+                          >
+                            <span className="font-semibold text-sky-300">{r.site_id}</span>
+                            <span className="text-white/45">{r.region}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Site slots */}
+                  <div>
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-white/45">Selected sites</p>
+                      {btcSites.length > 0 && (
+                        <button onClick={() => { setBtcSites([]); setBtcResult(null); setBtcStatus(null); setBtcPickMode(false) }}
+                          className="text-[10px] text-white/40 hover:text-red-400">Reset</button>
+                      )}
+                    </div>
+                    <div className="space-y-1.5">
+                      {Array.from({ length: btcMode }).map((_, i) => {
+                        const s = btcSites[i]
+                        const col = SLOT_COLORS[i]
+                        return (
+                          <div key={i} className="flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs transition-colors"
+                            style={{ borderColor: s ? col : 'rgba(255,255,255,0.1)', background: s ? col + '10' : 'transparent' }}>
+                            <div className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: s ? col : 'transparent', border: `2px solid ${col}` }} />
+                            {s ? (
+                              <>
+                                <span className="flex-1 font-semibold" style={{ color: col }}>{s.site_id}</span>
+                                <span className="text-white/45">{s.lat.toFixed(4)}, {s.lng.toFixed(4)}</span>
+                                <button onClick={() => setBtcSites((prev) => prev.filter((_, j) => j !== i))}
+                                  className="ml-1 text-white/30 hover:text-red-400">✕</button>
+                              </>
+                            ) : (
+                              <span className="flex-1 italic text-white/35">Site {i + 1}</span>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                    {btcSites.length < btcMode && (
+                      <button
+                        onClick={() => setBtcPickMode((v) => !v)}
+                        className={`mt-2 w-full rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                          btcPickMode ? 'bg-amber-400 text-ink-900' : 'border border-white/20 text-white/70 hover:bg-white/10'
+                        }`}
+                      >
+                        {btcPickMode ? `Click a site on the map…` : `+ Click map to add site ${btcSites.length + 1}`}
+                      </button>
+                    )}
+                  </div>
+
+                  {btcSites.length >= btcMode && (
+                    <button onClick={runBtcAnalysis}
+                      className="w-full rounded-xl bg-gradient-to-r from-sky-500 to-accent-500 py-2.5 text-xs font-semibold text-white">
+                      Run analysis
+                    </button>
+                  )}
+
+                  {btcStatus && <p className="text-[11px] text-white/60">{btcStatus}</p>}
+
+                  {btcResult && (
+                    <div className="space-y-1.5 rounded-xl border border-white/10 bg-white/5 p-3 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-white/55">Buffer radius</span>
+                        <span className="font-semibold">{fmtDistance(btcResult.radiusKm * 1000)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-white/55">Flagged buildings</span>
+                        <span className={`font-semibold ${btcResult.buildingCount > 0 ? 'text-red-300' : ''}`}>{btcResult.buildingCount}</span>
+                      </div>
+                      {btcResult.substations.length > 0 && (
+                        <div className="mt-2 border-t border-white/10 pt-2">
+                          <p className="mb-1 text-[10px] text-white/45">Nearest substations</p>
+                          {btcResult.substations.map((s, i) => (
+                            <div key={i} className="flex justify-between text-[11px]">
+                              <span className="truncate text-white/70">{s.name || 'Substation'}</span>
+                              <span className="ml-2 shrink-0 text-amber-300">{fmtDistance(s.distM)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+          </div>
+        </GlassPanel>
       )}
 
-    </div>
+    {forecastModal && (
+      <ForecastModal
+        siteId={forecastModal.siteId}
+        rows={forecastModal.rows}
+        onClose={() => setForecastModal(null)}
+      />
+    )}
+  </div>
   )
 }

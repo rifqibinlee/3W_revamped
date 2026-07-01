@@ -26,7 +26,7 @@ from pathlib import Path
 import pandas as pd
 
 from app.analytics.db import get_connection
-from app.core.config import settings
+from app.ingestion import parquet_store
 
 OUTPUT_TABLE = "forecast_results"
 FORECAST_HORIZON = 52
@@ -39,7 +39,7 @@ def _get_iso_date(year: int, week: int) -> date | None:
         return None
 
 
-def run(xc_paths: list[str], xd_paths: list[str]) -> Path | None:
+def run(xc_paths: list[str], xd_paths: list[str]) -> str | None:
     con = get_connection()
     try:
         return _run(con, xc_paths, xd_paths)
@@ -47,7 +47,7 @@ def run(xc_paths: list[str], xd_paths: list[str]) -> Path | None:
         con.close()
 
 
-def _run(con, xc_paths: list[str], xd_paths: list[str]) -> Path | None:
+def _run(con, xc_paths: list[str], xd_paths: list[str]) -> str | None:
     all_paths = list(xc_paths) + list(xd_paths)
     if not all_paths:
         raise ValueError("No xC or xD sector-calculation files provided")
@@ -146,8 +146,7 @@ def _run(con, xc_paths: list[str], xd_paths: list[str]) -> Path | None:
     df = df.merge(summary, on="zoom_sector_id", how="left")
     df["month_congested"] = df["forecast_congested_weeks"] >= 3
 
-    output_path = Path(settings.parquet_dir) / f"{OUTPUT_TABLE}.parquet"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_uri = parquet_store.parquet_uri(f"{OUTPUT_TABLE}.parquet")
     con.register("forecast_df", df)
-    con.execute(f"COPY forecast_df TO '{output_path}' (FORMAT PARQUET, COMPRESSION SNAPPY)")
-    return output_path
+    con.execute(f"COPY forecast_df TO '{output_uri}' (FORMAT PARQUET, COMPRESSION SNAPPY)")
+    return output_uri

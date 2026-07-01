@@ -32,6 +32,7 @@ from app.ingestion.stages import (
     site_coverage_params,
     xc_huawei,
 )
+from app.ingestion.storage import list_objects, stage_all, staged_object
 
 CATEGORIES: dict[str, dict] = {
     "site_data": {"label": "Site & Cell Exports", "weekly": False},
@@ -158,11 +159,20 @@ def preview_file(category: str, week: str | None, filename: str) -> dict:
 
 
 def run_pipeline() -> dict:
-    """Runs the ETL stages against whatever's currently uploaded. Site
-    config and cell reference are category-wide (every file in the
-    category feeds the same stage call); Network Data is processed once
-    per uploaded week, matching how the stages are actually shaped
-    (xc_huawei/pre_capex_upgrades take one raw file at a time)."""
+    """Runs the ETL pipeline.
+
+    Local mode (USE_REAL_S3=false): reads files from raw_data_dir on disk.
+    S3 mode (USE_REAL_S3=true): streams raw files from S3 via temp files,
+    processes them, writes Parquet outputs directly back to S3. EC2 disk
+    is only used for in-flight temp copies.
+    """
+    if settings.use_real_s3:
+        return _run_pipeline_s3()
+    return _run_pipeline_local()
+
+
+def _run_pipeline_local() -> dict:
+    """ETL using local raw_data_dir files."""
     site_files = [str(p) for p in (Path(settings.raw_data_dir) / "site_data").glob("*") if p.is_file()]
     cell_ref_files = [str(p) for p in (Path(settings.raw_data_dir) / "cell_reference").glob("*") if p.is_file()]
     network_root = Path(settings.raw_data_dir) / "network_data"
@@ -189,22 +199,99 @@ def run_pipeline() -> dict:
         )
         return result
 
-    xc_paths = [str(xc_huawei.run(f, str(cell_reference_path))) for f in weekly_files]
+    xc_paths = [xc_huawei.run(f, cell_reference_path) for f in weekly_files]
     result["stages_run"].append(f"xc_huawei ({len(xc_paths)} weekly file(s))")
 
     congestion_path = congestion_analysis.run(xc_paths, [])
     result["stages_run"].append("congestion_analysis")
 
-    cd_combined_result.run(xc_paths, [], str(congestion_path))
+    cd_combined_result.run(xc_paths, [], congestion_path)
     result["stages_run"].append("cd_combined_result")
 
     pre_capex_paths = [
         out for f in weekly_files
-        if (out := pre_capex_upgrades.run(f, str(cell_reference_path), str(congestion_path), "xC")) is not None
+        if (out := pre_capex_upgrades.run(f, cell_reference_path, congestion_path, "xC")) is not None
     ]
     if pre_capex_paths:
         for p in pre_capex_paths:
-            capex_upgrades.run(str(p), str(congestion_path), str(cell_reference_path), DEFAULT_PRICING)
+            capex_upgrades.run(p, congestion_path, cell_reference_path, DEFAULT_PRICING)
+        result["stages_run"].append(f"pre_capex_upgrades+capex_upgrades ({len(pre_capex_paths)} week(s))")
+
+    forecast_results.run(xc_paths, [])
+    result["stages_run"].append("forecast_results")
+
+    return result
+
+
+def _run_pipeline_s3() -> dict:
+    """ETL reading raw files from S3, writing Parquet back to S3.
+    Each raw file is staged to a local temp path, processed, then deleted.
+    """
+    bucket = settings.s3_bucket
+    result: dict[str, list[str]] = {"stages_run": [], "stages_skipped": []}
+
+    site_keys = list_objects(bucket, settings.s3_location_data_prefix)
+    cell_ref_keys = list_objects(bucket, settings.s3_cell_ref_prefix)
+    network_keys = list_objects(bucket, settings.s3_network_data_prefix)
+
+    # Site + cell reference need simultaneous access (both fed to multiple
+    # stages), so we stage them all at once and keep them alive for the run.
+    all_static_keys = site_keys + cell_ref_keys
+    if not cell_ref_keys:
+        result["stages_skipped"].append("cell_reference and everything downstream (no cell_ref S3 files)")
+        return result
+
+    with stage_all(bucket, all_static_keys) as static_paths:
+        n_site = len(site_keys)
+        site_paths = static_paths[:n_site]
+        cell_ref_paths = static_paths[n_site:]
+
+        if site_paths:
+            site_coordinates.run(site_paths)
+            site_coverage_params.run(site_paths)
+            result["stages_run"] += ["site_coordinates", "site_coverage_params"]
+        else:
+            result["stages_skipped"].append("site_coordinates/site_coverage_params (no location S3 files)")
+
+        cell_reference_path = cell_reference.run(cell_ref_paths)
+        result["stages_run"].append("cell_reference")
+
+    if not network_keys:
+        result["stages_skipped"].append(
+            "xc_huawei/congestion_analysis/forecast_results/capex_upgrades (no network S3 files)"
+        )
+        return result
+
+    xc_paths: list[str] = []
+
+    # Pass 1: xc_huawei — stage each weekly file, compute sector KPIs,
+    # delete temp. One file at a time so EC2 disk holds at most one
+    # ~100MB raw file at any moment.
+    for key in network_keys:
+        with staged_object(bucket, key) as tmp_path:
+            xc_out = xc_huawei.run(tmp_path, cell_reference_path)
+            xc_paths.append(xc_out)
+
+    result["stages_run"].append(f"xc_huawei ({len(xc_paths)} weekly file(s))")
+
+    congestion_path = congestion_analysis.run(xc_paths, [])
+    result["stages_run"].append("congestion_analysis")
+
+    cd_combined_result.run(xc_paths, [], congestion_path)
+    result["stages_run"].append("cd_combined_result")
+
+    # Pass 2: pre_capex_upgrades — re-stage each file now that congestion
+    # is available (it filters to congested sectors only).
+    pre_capex_paths: list[str] = []
+    for key in network_keys:
+        with staged_object(bucket, key) as tmp_path:
+            pre_out = pre_capex_upgrades.run(tmp_path, cell_reference_path, congestion_path, "xC")
+            if pre_out:
+                pre_capex_paths.append(pre_out)
+
+    if pre_capex_paths:
+        for p in pre_capex_paths:
+            capex_upgrades.run(p, congestion_path, cell_reference_path, DEFAULT_PRICING)
         result["stages_run"].append(f"pre_capex_upgrades+capex_upgrades ({len(pre_capex_paths)} week(s))")
 
     forecast_results.run(xc_paths, [])

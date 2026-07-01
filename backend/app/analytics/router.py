@@ -31,9 +31,15 @@ def download_report(report: str) -> FileResponse:
     return FileResponse(path, filename=filename, media_type="text/csv")
 
 
+@router.get("/available-weeks")
+def available_weeks() -> list[dict]:
+    """Distinct (year, week) pairs present in congestion_analysis, newest first."""
+    return service.available_weeks()
+
+
 @router.get("/current-status")
-def current_status() -> list[dict]:
-    return service.current_status()
+def current_status(year: int | None = None, week: int | None = None) -> list[dict]:
+    return service.current_status(year, week)
 
 
 @router.get("/forecast-status")

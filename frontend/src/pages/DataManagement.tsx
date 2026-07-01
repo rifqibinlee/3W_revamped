@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { DataTable, type Column } from '../components/DataTable'
 import { GlassPanel } from '../components/GlassPanel'
 import { api, ApiError, type DataCategory, type DataFile, type DataFilePreview } from '../lib/api'
+import { GeoServerTab } from './GeoServerTab'
 
 function isoWeek(d: Date): string {
   const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
@@ -18,7 +19,10 @@ function fmtBytes(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
+type Tab = 's3' | 'geoserver'
+
 export function DataManagement() {
+  const [activeTab, setActiveTab] = useState<Tab>('s3')
   const [categories, setCategories] = useState<DataCategory[]>([])
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [weeks, setWeeks] = useState<string[]>([])
@@ -29,6 +33,7 @@ export function DataManagement() {
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
+  const [syncingKb, setSyncingKb] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   function loadCategories() {
@@ -125,6 +130,20 @@ export function DataManagement() {
     }
   }
 
+  async function handleSyncKnowledgeBase() {
+    setSyncingKb(true)
+    setStatus(null)
+    setError(null)
+    try {
+      await api.syncKnowledgeBase()
+      setStatus('Knowledge base sync started — new PDFs and Excel files from S3 are being ingested in the background.')
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Knowledge base sync failed')
+    } finally {
+      setSyncingKb(false)
+    }
+  }
+
   async function handleRunPipeline() {
     setRunning(true)
     setStatus(null)
@@ -165,34 +184,66 @@ export function DataManagement() {
 
   return (
     <div className="space-y-4">
+      {/* Header + tab switcher */}
       <GlassPanel className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="font-display text-lg font-semibold">Data management</p>
           <p className="mt-1 text-sm text-white/60">
-            Upload raw source files by category, then run the ETL pipeline to refresh the analytics data.
+            {activeTab === 's3'
+              ? 'Upload raw source files by category, then run the ETL pipeline to refresh analytics.'
+              : 'Manage GeoServer layers — publish, style, and toggle layer visibility.'}
           </p>
         </div>
-        <button
-          onClick={handleRunPipeline}
-          disabled={running}
-          className="rounded-xl bg-gradient-to-r from-accent-400 to-accent-500 px-5 py-2.5 text-sm font-semibold text-ink-900 disabled:opacity-60"
-        >
-          {running ? 'Running pipeline…' : 'Run ETL pipeline'}
-        </button>
+        <div className="flex items-center gap-3">
+          {/* Tab pill */}
+          <div className="flex rounded-xl border border-white/15 bg-white/5 p-0.5">
+            {(['s3', 'geoserver'] as Tab[]).map((t) => (
+              <button
+                key={t}
+                onClick={() => setActiveTab(t)}
+                className={`rounded-lg px-4 py-1.5 text-xs font-semibold transition-colors ${
+                  activeTab === t ? 'bg-white/15 text-white' : 'text-white/50 hover:text-white/80'
+                }`}
+              >
+                {t === 's3' ? 'S3 / Files' : 'GeoServer'}
+              </button>
+            ))}
+          </div>
+          {activeTab === 's3' && (
+            <div className="flex gap-2">
+              <button
+                onClick={handleSyncKnowledgeBase}
+                disabled={syncingKb}
+                className="rounded-xl border border-sky-400/40 px-4 py-2.5 text-sm font-semibold text-sky-300 hover:bg-sky-400/10 disabled:opacity-60"
+              >
+                {syncingKb ? 'Syncing KB…' : 'Sync Knowledge Base'}
+              </button>
+              <button
+                onClick={handleRunPipeline}
+                disabled={running}
+                className="rounded-xl bg-gradient-to-r from-accent-400 to-accent-500 px-5 py-2.5 text-sm font-semibold text-ink-900 disabled:opacity-60"
+              >
+                {running ? 'Running pipeline…' : 'Run ETL pipeline'}
+              </button>
+            </div>
+          )}
+        </div>
       </GlassPanel>
 
-      {status && (
+      {activeTab === 'geoserver' && <GeoServerTab />}
+
+      {activeTab === 's3' && status && (
         <GlassPanel className="border-green-400/30 bg-green-400/5">
           <p className="text-sm text-green-200">{status}</p>
         </GlassPanel>
       )}
-      {error && (
+      {activeTab === 's3' && error && (
         <GlassPanel className="border-red-400/30 bg-red-400/5">
           <p className="text-sm text-red-300">{error}</p>
         </GlassPanel>
       )}
 
-      <div className="grid gap-4 md:grid-cols-[260px_1fr]">
+      {activeTab === 's3' && <div className="grid gap-4 md:grid-cols-[260px_1fr]">
         <GlassPanel>
           <p className="mb-3.5 font-display text-sm font-semibold">Directories</p>
           <div className="space-y-1">
@@ -306,7 +357,7 @@ export function DataManagement() {
             </GlassPanel>
           )}
         </div>
-      </div>
+      </div>}
     </div>
   )
 }

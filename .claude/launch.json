@@ -2,10 +2,16 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "frontend",
+      "name": "3w-frontend",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "frontend"],
-      "port": 5173
+      "port": 5180
+    },
+    {
+      "name": "3w-backend",
+      "runtimeExecutable": "run_backend.bat",
+      "runtimeArgs": [],
+      "port": 8000
     }
   ]
 }

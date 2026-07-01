@@ -18,8 +18,7 @@ from pathlib import Path
 import pandas as pd
 
 from app.analytics.db import get_connection
-from app.core.config import settings
-from app.ingestion import parquet_safe
+from app.ingestion import parquet_safe, parquet_store
 
 OUTPUT_TABLE = "site_coverage_params"
 
@@ -97,7 +96,7 @@ def _excel_sheets_to_parquet(path: str) -> list[str]:
     return out_paths
 
 
-def run(raw_file_paths: list[str]) -> Path:
+def run(raw_file_paths: list[str]) -> str:
     con = get_connection()
     temp_parquets: list[str] = []
     try:
@@ -108,7 +107,7 @@ def run(raw_file_paths: list[str]) -> Path:
             Path(p).unlink(missing_ok=True)
 
 
-def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> Path:
+def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> str:
     selects: list[str] = []
     i = 0
 
@@ -162,14 +161,13 @@ def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> Path:
         WHERE site_id IS NOT NULL
     """)
 
-    output_path = Path(settings.parquet_dir) / f"{OUTPUT_TABLE}.parquet"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_uri = parquet_store.parquet_uri(f"{OUTPUT_TABLE}.parquet")
     con.execute(f"""
         COPY (
             SELECT site_id, cell_name, azimuth, technology, antenna_height,
                    m_tilt, e_tilt, remark, coverage_radius_m
             FROM coverage
             WHERE rn = 1
-        ) TO '{output_path}' (FORMAT PARQUET, COMPRESSION SNAPPY)
+        ) TO '{output_uri}' (FORMAT PARQUET, COMPRESSION SNAPPY)
     """)
-    return output_path
+    return output_uri

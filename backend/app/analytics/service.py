@@ -24,8 +24,14 @@ from app.analytics.db import get_connection
 from app.core.config import settings
 
 
-def _parquet_path(name: str) -> Path:
-    return Path(settings.parquet_dir) / f"{name}.parquet"
+def _parquet_path(name: str) -> str:
+    from app.ingestion.parquet_store import parquet_uri
+    return parquet_uri(f"{name}.parquet")
+
+
+def _parquet_exists(uri: str) -> bool:
+    from app.ingestion.parquet_store import parquet_exists
+    return parquet_exists(uri)
 
 
 FORECAST_METRICS = ("eric_data_volume_ul_dl", "eric_prb_util_rate", "eric_dl_user_ip_thpt")
@@ -57,7 +63,7 @@ def site_forecast(site_id: str, metric: str, horizon_weeks: int = 8) -> dict:
 
     path = _parquet_path("congestion_analysis")
     empty = {"site_id": site_id.upper(), "metric": metric, "actual": [], "forecast": []}
-    if not path.exists():
+    if not _parquet_exists(path):
         return empty
 
     con = get_connection()
@@ -129,7 +135,7 @@ def sector_current_status(zoom_sector_id: str) -> dict | None:
     zoom_sector_id rather than wanting the per-site rollup current_status()
     returns for the map."""
     congestion_path = _parquet_path("congestion_analysis")
-    if not congestion_path.exists():
+    if not _parquet_exists(congestion_path):
         return None
     con = get_connection()
     try:
@@ -155,7 +161,7 @@ def sector_forecast_status(zoom_sector_id: str, year: int, week: int) -> dict | 
     """Forecast status for one specific SECTOR at a year/week — same
     per-sector vs. per-site distinction as sector_current_status()."""
     forecast_path = _parquet_path("forecast_results")
-    if not forecast_path.exists():
+    if not _parquet_exists(forecast_path):
         return None
     con = get_connection()
     try:
@@ -170,29 +176,48 @@ def sector_forecast_status(zoom_sector_id: str, year: int, week: int) -> dict | 
         con.close()
 
 
-def current_status() -> list[dict]:
-    """Latest week's congestion status per site, joined with coordinates.
+def available_weeks() -> list[dict]:
+    """Distinct (year, week) pairs in congestion_analysis, newest first."""
+    path = _parquet_path("congestion_analysis")
+    if not _parquet_exists(path):
+        return []
+    con = get_connection()
+    try:
+        rows = con.execute(f"""
+            SELECT DISTINCT year, week
+            FROM read_parquet('{path}')
+            ORDER BY year DESC, week DESC
+        """).fetchdf()
+        return rows.to_dict("records")
+    finally:
+        con.close()
 
-    One row per SITE, not per sector — congestion_analysis has ~2.9
-    sectors per site on average (17,650 sectors across 6,024 sites in
-    the real dataset), and a naive per-sector query produces several
-    markers stacked at the exact same coordinate, wildly inflating the
-    map's apparent site/cluster counts versus the "Total sites" stat
-    everywhere else on the page. A site counts as congested here if
-    any of its sectors are congested in their latest week."""
+
+def current_status(year: int | None = None, week: int | None = None) -> list[dict]:
+    """Congestion status per site for the given week, or the latest week if unspecified."""
     congestion_path = _parquet_path("congestion_analysis")
     sites_path = _parquet_path("site_coordinates")
-    if not congestion_path.exists() or not sites_path.exists():
+    if not _parquet_exists(congestion_path) or not _parquet_exists(sites_path):
         return []
 
     con = get_connection()
     try:
+        if year is not None and week is not None:
+            week_filter = f"WHERE year = {year} AND week = {week}"
+            partition_order = "ORDER BY year DESC, week DESC"
+        else:
+            week_filter = ""
+            partition_order = "ORDER BY year DESC, week DESC"
+
         rows = con.execute(f"""
-            WITH latest AS (
+            WITH all_rows AS (
+                SELECT * FROM read_parquet('{congestion_path}') {week_filter}
+            ),
+            latest AS (
                 SELECT *, row_number() OVER (
-                    PARTITION BY zoom_sector_id ORDER BY year DESC, week DESC
+                    PARTITION BY zoom_sector_id {partition_order}
                 ) AS rn
-                FROM read_parquet('{congestion_path}')
+                FROM all_rows
             ),
             per_site AS (
                 SELECT site_id, any_value(region) AS region, bool_or(congested) AS congested
@@ -219,7 +244,7 @@ def forecast_status(year: int, week: int) -> list[dict]:
     this in line with the "Total sites" count used everywhere else."""
     forecast_path = _parquet_path("forecast_results")
     sites_path = _parquet_path("site_coordinates")
-    if not forecast_path.exists() or not sites_path.exists():
+    if not _parquet_exists(forecast_path) or not _parquet_exists(sites_path):
         return []
 
     con = get_connection()
@@ -312,7 +337,7 @@ def sector_metrics(filters: Filters, limit: int = 100, offset: int = 0) -> dict:
     (often much larger than one page) result set instead of silently
     truncating to whatever `limit` happens to default to."""
     path = _parquet_path("congestion_analysis")
-    if not path.exists():
+    if not _parquet_exists(path):
         return {"rows": [], "total": 0}
     con = get_connection()
     try:
@@ -330,7 +355,7 @@ def sector_metrics(filters: Filters, limit: int = 100, offset: int = 0) -> dict:
 def congested_sectors(filters: Filters, limit: int = 100, offset: int = 0) -> dict:
     """The 'Congested Sectors' table — same source, congested = true only."""
     path = _parquet_path("congestion_analysis")
-    if not path.exists():
+    if not _parquet_exists(path):
         return {"rows": [], "total": 0}
     con = get_connection()
     try:
@@ -354,7 +379,7 @@ def forecast_table(filters: Filters, limit: int = 100, offset: int = 0) -> dict:
     region/cluster column (it's per-sector, not joined to site data), so
     only year/week/operator filters apply here."""
     path = _parquet_path("forecast_results")
-    if not path.exists():
+    if not _parquet_exists(path):
         return {"rows": [], "total": 0}
     con = get_connection()
     try:
@@ -373,7 +398,7 @@ def summary_stats(filters: Filters) -> dict:
     """The three stat tiles above the tables: total sectors, congested
     count, average data volume (GB)."""
     path = _parquet_path("congestion_analysis")
-    if not path.exists():
+    if not _parquet_exists(path):
         return {"total_sectors": 0, "congested_count": 0, "avg_volume_gb": 0.0}
     con = get_connection()
     try:
@@ -407,16 +432,17 @@ def site_detail(site_id: str) -> dict:
     sites_path = _parquet_path("site_coordinates")
     congestion_path = _parquet_path("congestion_analysis")
     forecast_path = _parquet_path("forecast_results")
-    capex_glob = str(Path(settings.parquet_dir) / "capex_upgrades_*.parquet")
-    capex_files = list(Path(settings.parquet_dir).glob("capex_upgrades_*.parquet")) if Path(settings.parquet_dir).exists() else []
+    from app.ingestion.parquet_store import list_parquet_glob, parquet_glob_uri
+    capex_glob = parquet_glob_uri("capex_upgrades_*.parquet")
+    capex_files = list_parquet_glob("capex_upgrades_*.parquet")
 
-    if not sites_path.exists() and not congestion_path.exists() and not forecast_path.exists() and not capex_files:
+    if not _parquet_exists(sites_path) and not _parquet_exists(congestion_path) and not _parquet_exists(forecast_path) and not capex_files:
         return {"site": None, "congested": False, "sectors": [], "forecast": [], "capex_upgrades": []}
 
     con = get_connection()
     try:
         site_row = None
-        if sites_path.exists():
+        if _parquet_exists(sites_path):
             row = con.execute(
                 f"SELECT site_id, region, cluster, latitude, longitude FROM read_parquet('{sites_path}') WHERE site_id = ?",
                 [site_id],
@@ -425,7 +451,7 @@ def site_detail(site_id: str) -> dict:
                 site_row = {"site_id": row[0], "region": row[1], "cluster": row[2], "latitude": row[3], "longitude": row[4]}
 
         sectors: list[dict] = []
-        if congestion_path.exists():
+        if _parquet_exists(congestion_path):
             df = con.execute(
                 f"""
                 WITH latest AS (
@@ -442,7 +468,7 @@ def site_detail(site_id: str) -> dict:
             sectors = df.drop(columns=["rn"], errors="ignore").to_dict("records")
 
         forecast: list[dict] = []
-        if forecast_path.exists():
+        if _parquet_exists(forecast_path):
             df = con.execute(
                 f"""
                 SELECT * FROM read_parquet('{forecast_path}')
@@ -457,8 +483,16 @@ def site_detail(site_id: str) -> dict:
         if capex_files:
             df = con.execute(
                 f"""
-                SELECT * FROM read_parquet('{capex_glob}')
-                WHERE split_part(zoom_sector_id, '_', 1) = ?
+                WITH ranked AS (
+                    SELECT *,
+                        row_number() OVER (
+                            PARTITION BY zoom_sector_id
+                            ORDER BY data_year DESC, data_week DESC
+                        ) AS rn
+                    FROM read_parquet('{capex_glob}')
+                    WHERE split_part(zoom_sector_id, '_', 1) = ?
+                )
+                SELECT * EXCLUDE (rn) FROM ranked WHERE rn = 1
                 """,
                 [site_id],
             ).fetchdf()
@@ -476,7 +510,8 @@ def site_detail(site_id: str) -> dict:
 
 
 def _capex_glob() -> str:
-    return str(Path(settings.parquet_dir) / "capex_upgrades_*.parquet")
+    from app.ingestion.parquet_store import parquet_glob_uri
+    return parquet_glob_uri("capex_upgrades_*.parquet")
 
 
 def capex_summary(region: str | None = None, search: str | None = None) -> dict:
@@ -496,13 +531,13 @@ def capex_summary(region: str | None = None, search: str | None = None) -> dict:
     try:
         join_clause = (
             f"LEFT JOIN read_parquet('{sites_path}') s ON split_part(cu.zoom_sector_id, '_', 1) = s.site_id"
-            if sites_path.exists() else ""
+            if _parquet_exists(sites_path) else ""
         )
-        region_col = "s.region" if sites_path.exists() else "NULL"
+        region_col = "s.region" if _parquet_exists(sites_path) else "NULL"
 
         clauses: list[str] = []
         params: list = []
-        if region and region != "All" and sites_path.exists():
+        if region and region != "All" and _parquet_exists(sites_path):
             clauses.append(f"{region_col} = ?")
             params.append(region)
         if search:
@@ -537,7 +572,7 @@ def capex_summary(region: str | None = None, search: str | None = None) -> dict:
                 """,
                 params,
             ).fetchdf()
-            if sites_path.exists()
+            if _parquet_exists(sites_path)
             else None
         )
 
@@ -562,10 +597,9 @@ def capex_summary(region: str | None = None, search: str | None = None) -> dict:
         con.close()
 
 
-def _capex_files() -> list[Path]:
-    if not Path(settings.parquet_dir).exists():
-        return []
-    return list(Path(settings.parquet_dir).glob("capex_upgrades_*.parquet"))
+def _capex_files() -> list[str]:
+    from app.ingestion.parquet_store import list_parquet_glob
+    return list_parquet_glob("capex_upgrades_*.parquet")
 
 
 _EMPTY_MAP_STATS = {
@@ -588,7 +622,7 @@ def map_stats(
     holes_path = _parquet_path("coverage_holes")
     capex_files = _capex_files()
 
-    if not sites_path.exists():
+    if not _parquet_exists(sites_path):
         return dict(_EMPTY_MAP_STATS)
 
     con = get_connection()
@@ -597,7 +631,7 @@ def map_stats(
         bbox_params = [west, east, south, north]
 
         total_sites = congested_sites = healthy_sites = 0
-        if year is not None and week is not None and forecast_path.exists():
+        if year is not None and week is not None and _parquet_exists(forecast_path):
             row = con.execute(
                 f"""
                 WITH per_site AS (
@@ -613,7 +647,7 @@ def map_stats(
                 [year, week] + bbox_params,
             ).fetchone()
             total_sites, congested_sites = row[0] or 0, row[1] or 0
-        elif congestion_path.exists():
+        elif _parquet_exists(congestion_path):
             row = con.execute(
                 f"""
                 WITH latest AS (
@@ -637,7 +671,7 @@ def map_stats(
 
         coverage_holes = 0
         worst_hole = None
-        if holes_path.exists():
+        if _parquet_exists(holes_path):
             top = con.execute(
                 f"""
                 SELECT cluster_id, data_source, count(*) AS point_count, avg(signal_strength) AS avg_signal
@@ -712,7 +746,7 @@ def site_coverage(south: float, west: float, north: float, east: float) -> list[
     supplies the real per-cell parameters behind it."""
     sites_path = _parquet_path("site_coordinates")
     params_path = _parquet_path("site_coverage_params")
-    if not sites_path.exists() or not params_path.exists():
+    if not _parquet_exists(sites_path) or not _parquet_exists(params_path):
         return []
 
     con = get_connection()
@@ -753,7 +787,7 @@ def coverage_holes_by_band(south: float, west: float, north: float, east: float,
     if band not in _SIGNAL_BANDS:
         raise InvalidMetricError(f"Unknown signal band '{band}', expected one of {list(_SIGNAL_BANDS)}")
     holes_path = _parquet_path("coverage_holes")
-    if not holes_path.exists():
+    if not _parquet_exists(holes_path):
         return []
 
     lower, upper = _SIGNAL_BANDS[band]
@@ -880,7 +914,7 @@ def overview_stats() -> dict:
     holes_path = _parquet_path("coverage_holes")
     capex_files = _capex_files()
 
-    if not congestion_path.exists() and not holes_path.exists() and not capex_files:
+    if not _parquet_exists(congestion_path) and not _parquet_exists(holes_path) and not capex_files:
         return {
             "total_sites": 0, "total_congested_sites": 0, "total_capex": 0.0,
             "worst_congested_sectors": [], "worst_ookla_clusters": [], "worst_mr_clusters": [],
@@ -890,7 +924,7 @@ def overview_stats() -> dict:
     try:
         total_sites = total_congested = 0
         worst_congested_sectors: list[dict] = []
-        if congestion_path.exists():
+        if _parquet_exists(congestion_path):
             row = con.execute(f"""
                 WITH latest AS (
                     SELECT *, row_number() OVER (
@@ -908,9 +942,9 @@ def overview_stats() -> dict:
             # problem than one congested for 10.
             join_clause = (
                 f"LEFT JOIN read_parquet('{sites_path}') s ON split_part(c.zoom_sector_id, '_', 1) = s.site_id"
-                if sites_path.exists() else ""
+                if _parquet_exists(sites_path) else ""
             )
-            site_cols = "s.latitude, s.longitude" if sites_path.exists() else "NULL, NULL"
+            site_cols = "s.latitude, s.longitude" if _parquet_exists(sites_path) else "NULL, NULL"
             worst_rows = con.execute(f"""
                 SELECT c.zoom_sector_id, c.region, max(c.congested_weeks) AS weeks, {site_cols}
                 FROM read_parquet('{congestion_path}') c
@@ -932,7 +966,7 @@ def overview_stats() -> dict:
             total_capex = round(row[0], 2) if row and row[0] is not None else 0.0
 
         def worst_clusters(source: str) -> list[dict]:
-            if not holes_path.exists():
+            if not _parquet_exists(holes_path):
                 return []
             rows = con.execute(
                 f"""
@@ -969,7 +1003,7 @@ def filter_options() -> dict:
     exists, rather than a hardcoded list — matches the legacy UI's
     dynamically-populated Region/Year/Week selects."""
     path = _parquet_path("congestion_analysis")
-    if not path.exists():
+    if not _parquet_exists(path):
         return {"regions": [], "years": [], "weeks": [], "operators": []}
     con = get_connection()
     try:

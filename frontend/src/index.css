@@ -34,3 +34,88 @@ h3 {
   font-family: var(--font-display);
   font-weight: 600;
 }
+
+/* ── MapLibre site-detail popup ─────────────────────────────────────────── */
+.maplibregl-popup-content {
+  background: #0e0c2e !important;
+  border: 1px solid rgba(255,255,255,0.12) !important;
+  border-radius: 14px !important;
+  padding: 0 !important;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.7) !important;
+  overflow: hidden;
+  min-width: 560px;
+  max-width: 660px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-sans);
+  color: #fff;
+}
+/* The popup's inner div (our markup root) must also flex-column so the
+   tab-content area can independently scroll without the header scrolling */
+.maplibregl-popup-content > div {
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+  overflow: hidden;
+}
+.sw-popup-scrollable {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.maplibregl-popup-tip {
+  border-top-color: #0e0c2e !important;
+}
+.maplibregl-popup-close-button {
+  color: rgba(255,255,255,0.5) !important;
+  font-size: 18px !important;
+  padding: 6px 10px !important;
+  top: 4px !important;
+  right: 4px !important;
+  z-index: 10;
+}
+.maplibregl-popup-close-button:hover {
+  color: #fff !important;
+  background: rgba(255,255,255,0.08) !important;
+  border-radius: 6px;
+}
+
+/* Popup tab buttons */
+.sw-popup-tabs { display: flex; border-bottom: 1px solid rgba(255,255,255,0.1); }
+.sw-popup-tab {
+  flex: 1; padding: 8px 4px; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  color: rgba(255,255,255,0.45); cursor: pointer;
+  background: none; border: none; border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+.sw-popup-tab:hover { color: rgba(255,255,255,0.75); }
+.sw-popup-tab.active { color: #fff; border-bottom-color: #6e9fff; }
+
+/* Popup tables */
+.sw-popup-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.sw-popup-table th {
+  background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.5);
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; padding: 6px 8px; text-align: center;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.sw-popup-table th:first-child { text-align: left; }
+.sw-popup-table td {
+  padding: 5px 8px; text-align: center;
+  border-bottom: 1px solid rgba(255,255,255,0.06); color: rgba(255,255,255,0.85);
+}
+.sw-popup-table td:first-child { text-align: left; font-weight: 600; color: #6e9fff; }
+.sw-popup-table tr:last-child td { border-bottom: none; }
+.sw-popup-td-alert { color: #f87171 !important; font-weight: 700; }
+
+/* Badge */
+.sw-badge {
+  display: inline-block; padding: 2px 7px; border-radius: 999px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.sw-badge-healthy { background: rgba(74,222,128,0.15); color: #4ade80; border: 1px solid rgba(74,222,128,0.3); }
+.sw-badge-congested { background: rgba(248,113,113,0.15); color: #f87171; border: 1px solid rgba(248,113,113,0.3); }
+.sw-badge-neutral { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.6); border: 1px solid rgba(255,255,255,0.12); }

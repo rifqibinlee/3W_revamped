@@ -25,7 +25,7 @@ from pathlib import Path
 import pandas as pd
 
 from app.analytics.db import get_connection
-from app.core.config import settings
+from app.ingestion import parquet_store
 from app.ingestion import parquet_safe, sql_macros
 
 OUTPUT_TABLE = "cell_reference"
@@ -125,7 +125,7 @@ CREATE OR REPLACE MACRO band_from_cell_name(cell_str) AS (
 );
 """
 
-def run(raw_file_paths: list[str]) -> Path:
+def run(raw_file_paths: list[str]) -> str:
     con = get_connection()
     temp_parquets: list[str] = []
     try:
@@ -136,7 +136,7 @@ def run(raw_file_paths: list[str]) -> Path:
             Path(p).unlink(missing_ok=True)
 
 
-def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> Path:
+def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> str:
     con.execute(_NORMALIZE_BAND_MACRO)
     con.execute(_EXTRACT_BAND_FROM_CELL_MACRO)
     sql_macros.register(con)
@@ -208,8 +208,7 @@ def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> Path:
         FROM base
     """)
 
-    output_path = Path(settings.parquet_dir) / f"{OUTPUT_TABLE}.parquet"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = parquet_store.parquet_uri(f"{OUTPUT_TABLE}.parquet")
     con.execute(f"""
         COPY (
             SELECT

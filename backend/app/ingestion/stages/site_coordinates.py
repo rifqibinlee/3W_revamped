@@ -20,8 +20,7 @@ from pathlib import Path
 import pandas as pd
 
 from app.analytics.db import get_connection
-from app.core.config import settings
-from app.ingestion import parquet_safe
+from app.ingestion import parquet_safe, parquet_store
 
 OUTPUT_TABLE = "site_coordinates"
 
@@ -84,7 +83,7 @@ def _select_clause(columns: list[str]) -> str | None:
     """
 
 
-def run(raw_file_paths: list[str]) -> Path:
+def run(raw_file_paths: list[str]) -> str:
     con = get_connection()
     temp_parquets: list[str] = []
     try:
@@ -95,7 +94,7 @@ def run(raw_file_paths: list[str]) -> Path:
             Path(p).unlink(missing_ok=True)
 
 
-def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> Path:
+def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> str:
     selects: list[str] = []
     i = 0
 
@@ -144,13 +143,12 @@ def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> Path:
         FROM normalized
     """)
 
-    output_path = Path(settings.parquet_dir) / f"{OUTPUT_TABLE}.parquet"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_uri = parquet_store.parquet_uri(f"{OUTPUT_TABLE}.parquet")
     con.execute(f"""
         COPY (
             SELECT site_id, region, cluster, latitude, longitude
             FROM raw_sites
             WHERE rn = 1
-        ) TO '{output_path}' (FORMAT PARQUET, COMPRESSION SNAPPY)
+        ) TO '{output_uri}' (FORMAT PARQUET, COMPRESSION SNAPPY)
     """)
-    return output_path
+    return output_uri

@@ -32,7 +32,7 @@ import pandas as pd
 import pyxlsb
 
 from app.analytics.db import get_connection
-from app.core.config import settings
+from app.ingestion import parquet_store
 from app.ingestion import parquet_safe
 
 OUTPUT_TABLE = "pre_capex_upgrades"
@@ -143,7 +143,7 @@ def _parse_year_week(filename: str) -> tuple[int, int]:
     return year, week
 
 
-def run(raw_file_path: str, cell_reference_path: str, congestion_path: str, dataset_type: str) -> Path | None:
+def run(raw_file_path: str, cell_reference_path: str, congestion_path: str, dataset_type: str) -> str | None:
     if dataset_type not in ("xC", "xD"):
         raise ValueError(f"dataset_type must be 'xC' or 'xD', got {dataset_type!r}")
 
@@ -157,7 +157,7 @@ def run(raw_file_path: str, cell_reference_path: str, congestion_path: str, data
             Path(p).unlink(missing_ok=True)
 
 
-def _run(con, raw_file_path: str, cell_reference_path: str, congestion_path: str, dataset_type: str, temp_parquets: list[str]) -> Path | None:
+def _run(con, raw_file_path: str, cell_reference_path: str, congestion_path: str, dataset_type: str, temp_parquets: list[str]) -> str | None:
     file_year, file_week = _parse_year_week(raw_file_path)
 
     lower = raw_file_path.lower()
@@ -260,8 +260,7 @@ def _run(con, raw_file_path: str, cell_reference_path: str, congestion_path: str
         GROUP BY zoom_sector_id
     """)
 
-    output_path = Path(settings.parquet_dir) / f"{OUTPUT_TABLE}_{dataset_type}_{re.sub(r'[^A-Za-z0-9]', '_', Path(raw_file_path).stem)}.parquet"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = parquet_store.parquet_uri(f"{OUTPUT_TABLE}_{dataset_type}_{re.sub(r'[^A-Za-z0-9]', '_', parquet_store.stem_from_uri(raw_file_path))}.parquet")
     con.execute(f"""
         COPY (
             SELECT

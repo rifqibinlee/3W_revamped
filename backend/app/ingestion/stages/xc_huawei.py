@@ -36,8 +36,7 @@ from pathlib import Path
 import pyxlsb
 
 from app.analytics.db import get_connection
-from app.core.config import settings
-from app.ingestion import sql_macros
+from app.ingestion import parquet_store, sql_macros
 
 OUTPUT_TABLE = "xc_huawei"
 
@@ -109,7 +108,7 @@ def _xlsb_to_filtered_csv(path: str) -> str:
     return tmp.name
 
 
-def run(raw_file_path: str, cell_reference_path: str) -> Path:
+def run(raw_file_path: str, cell_reference_path: str) -> str:
     con = get_connection()
     temp_csv: str | None = None
     try:
@@ -118,7 +117,7 @@ def run(raw_file_path: str, cell_reference_path: str) -> Path:
         con.close()
 
 
-def _run(con, raw_file_path: str, cell_reference_path: str, temp_csv: str | None) -> Path:
+def _run(con, raw_file_path: str, cell_reference_path: str, temp_csv: str | None) -> str:
     sql_macros.register(con)
     file_year, file_week = _parse_year_week(raw_file_path)
 
@@ -255,9 +254,8 @@ def _run(con, raw_file_path: str, cell_reference_path: str, temp_csv: str | None
         # encode that, or calling this once per week (as the DAG requires)
         # silently overwrites the previous week's output under the same
         # static filename.
-        safe_stem = re.sub(r"[^A-Za-z0-9]", "_", Path(raw_file_path).stem)
-        output_path = Path(settings.parquet_dir) / f"{OUTPUT_TABLE}_{safe_stem}.parquet"
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        safe_stem = re.sub(r"[^A-Za-z0-9]", "_", parquet_store.stem_from_uri(raw_file_path))
+        output_uri = parquet_store.parquet_uri(f"{OUTPUT_TABLE}_{safe_stem}.parquet")
         con.execute(f"""
             COPY (
                 SELECT
@@ -283,9 +281,9 @@ def _run(con, raw_file_path: str, cell_reference_path: str, temp_csv: str | None
                     coalesce(first(vendor), 'Unknown') AS vendor
                 FROM per_cell_with_ref
                 GROUP BY zoom_sector_id, week, year
-            ) TO '{output_path}' (FORMAT PARQUET, COMPRESSION SNAPPY)
+            ) TO '{output_uri}' (FORMAT PARQUET, COMPRESSION SNAPPY)
         """)
-        return output_path
+        return output_uri
     finally:
         if temp_csv:
             Path(temp_csv).unlink(missing_ok=True)
