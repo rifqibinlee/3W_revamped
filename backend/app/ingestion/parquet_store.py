@@ -95,9 +95,18 @@ def configure_s3(con) -> None:
     if not settings.use_real_s3:
         return
     con.execute("INSTALL httpfs; LOAD httpfs;")
-    con.execute(f"SET s3_region='{settings.aws_region}';")
     if settings.aws_access_key and settings.aws_secret_key:
-        con.execute(f"SET s3_access_key_id='{settings.aws_access_key}';")
-        con.execute(f"SET s3_secret_access_key='{settings.aws_secret_key}';")
+        con.execute(
+            f"CREATE OR REPLACE SECRET _3w_s3 ("
+            f"TYPE S3, REGION '{settings.aws_region}', "
+            f"KEY_ID '{settings.aws_access_key}', "
+            f"SECRET '{settings.aws_secret_key}'"
+            f");"
+        )
     else:
-        con.execute("SET s3_use_credential_chain=true;")
+        # IAM role attached to EC2 — use instance metadata credential chain
+        con.execute(
+            f"CREATE OR REPLACE SECRET _3w_s3 ("
+            f"TYPE S3, PROVIDER CREDENTIAL_CHAIN, REGION '{settings.aws_region}'"
+            f");"
+        )
