@@ -34,7 +34,7 @@ def run(xc_paths: list[str], xd_paths: list[str]) -> str:
         con.close()
 
 
-def _run(con, xc_paths: list[str], xd_paths: list[str]) -> Path:
+def _run(con, xc_paths: list[str], xd_paths: list[str]) -> str:
     all_paths = list(xc_paths) + list(xd_paths)
     if not all_paths:
         raise ValueError("No xC or xD sector-calculation files provided")
