@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from app.analytics.db import get_connection
+from app.analytics.db import get_write_connection as get_connection
 from app.ingestion import parquet_store
 from app.ingestion import parquet_safe, sql_macros
 

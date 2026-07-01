@@ -18,7 +18,7 @@ sector ordered by (year, week) — a window function here instead of the
 legacy `groupby(...).cumsum()` on a pre-sorted DataFrame.
 """
 
-from app.analytics.db import get_connection
+from app.analytics.db import get_write_connection as get_connection
 from app.ingestion import parquet_store
 
 OUTPUT_TABLE = "congestion_analysis"

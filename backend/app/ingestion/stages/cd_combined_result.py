@@ -25,7 +25,7 @@ letter of ibc_macro) — same transform as the legacy `make_short_id`.
 
 from pathlib import Path
 
-from app.analytics.db import get_connection
+from app.analytics.db import get_write_connection as get_connection
 from app.core.config import settings
 
 SECTOR_COLUMNS = (
