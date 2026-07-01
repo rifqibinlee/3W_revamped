@@ -21,20 +21,22 @@ cd "$REPO_DIR"
 
 echo "==> Stopping any existing containers..."
 cd "$REPO_DIR/infra"
-docker compose down --remove-orphans
+docker-compose down --remove-orphans
 
 echo "==> Building backend image..."
-docker compose build --no-cache backend
+docker-compose build --no-cache backend
 
 echo "==> Starting all services..."
-docker compose up -d
+docker-compose up -d
 
 echo ""
-echo "All done. Services and their ports:"
-echo "  Frontend (nginx) : http://<your-ec2-ip>:80"
-echo "  Backend (API)    : http://<your-ec2-ip>:8000  (internal, proxied via /api/)"
-echo "  MinIO console    : http://<your-ec2-ip>:9001"
-echo "  GeoServer        : http://<your-ec2-ip>:8600/geoserver"
-echo "  Metabase         : http://<your-ec2-ip>:3001"
+echo "All done. Services:"
+echo "  Frontend  : http://<your-ec2-ip>"
+echo "  Backend   : http://<your-ec2-ip>/api/  (proxied via nginx)"
+echo "  GeoServer : http://<your-ec2-ip>:8600/geoserver"
+echo ""
+echo "Next steps:"
+echo "  1. Log in as admin and go to Data Management → Run ETL Pipeline"
+echo "  2. Go to Data Management → Sync Knowledge Base"
 echo ""
 echo "Services will auto-start on every EC2 reboot (restart:always + Docker systemd unit)."

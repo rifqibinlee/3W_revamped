@@ -1,44 +1,23 @@
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: postgres:16-alpine
     container_name: 3w_postgres
     restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-threew}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-threew}
+      POSTGRES_SHARED_BUFFERS: ${POSTGRES_SHARED_BUFFERS:-512MB}
     ports:
       - "5433:5432"
     volumes:
       - ./volumes/postgres:/var/lib/postgresql/data
+    mem_limit: 2g
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-threew} -d ${POSTGRES_DB:-threew}"]
       interval: 5s
       timeout: 5s
       retries: 10
-
-  minio:
-    image: minio/minio:latest
-    container_name: 3w_minio
-    restart: always
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-threew}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - ./volumes/minio:/data
-
-  ollama:
-    image: ollama/ollama:latest
-    container_name: 3w_ollama
-    restart: always
-    ports:
-      - "11434:11434"
-    volumes:
-      - ./volumes/ollama:/root/.ollama
 
   geoserver:
     image: kartoza/geoserver:2.24.0
@@ -48,29 +27,15 @@ services:
       - "8600:8080"
     volumes:
       - ./volumes/geoserver:/opt/geoserver/data_dir
-
-  metabase:
-    image: metabase/metabase:v0.59.6.3
-    container_name: 3w_metabase
-    restart: always
-    ports:
-      - "3001:3000"
-    depends_on:
-      postgres:
-        condition: service_healthy
+    mem_limit: 1g
 
   backend:
     build: ../backend
     container_name: 3w_backend
     restart: always
+    env_file: ../backend/.env
     environment:
       POSTGRES_DSN: postgresql+psycopg://${POSTGRES_USER:-threew}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-threew}
-      MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-threew}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
-      JWT_SECRET: ${JWT_SECRET}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OLLAMA_BASE_URL: http://ollama:11434
       GEOSERVER_URL: http://geoserver:8080/geoserver
       CORS_ORIGINS: '["http://localhost","http://${EC2_HOST:-localhost}"]'
       DUCKDB_PATH: /app/data/analytics.duckdb
@@ -79,11 +44,10 @@ services:
       AVATAR_DIR: /app/data/avatars
     volumes:
       - ../backend/data:/app/data
+    mem_limit: 3g
     depends_on:
       postgres:
         condition: service_healthy
-    networks:
-      - default
 
   nginx:
     image: nginx:alpine

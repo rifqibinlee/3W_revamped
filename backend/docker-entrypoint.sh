@@ -11,4 +11,4 @@ echo "Running Alembic migrations..."
 alembic upgrade head
 
 echo "Booting uvicorn..."
-exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-2} --timeout-keep-alive 600
