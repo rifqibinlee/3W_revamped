@@ -1,0 +1,197 @@
+{
+    "model_name": "Cell Site to Power Source Road Routing",
+    "model_group": "MDCI",
+    "parameters": {
+        "CELL_SITE": {
+            "parameter_type": "core:feature_source",
+            "description": "Cell Site (single-point layer)",
+            "flags": 8,
+            "name": "CELL_SITE",
+            "default": null,
+            "geometry_types": [0],
+            "data_types": [-1],
+            "value_hints": []
+        },
+        "POWER_SOURCES": {
+            "parameter_type": "core:feature_source",
+            "description": "Power Sources (substations and/or electric poles)",
+            "flags": 8,
+            "name": "POWER_SOURCES",
+            "default": null,
+            "geometry_types": [0],
+            "data_types": [-1],
+            "value_hints": []
+        },
+        "ROAD_NETWORK": {
+            "parameter_type": "core:feature_source",
+            "description": "Road Network (line layer – OSM or local)",
+            "flags": 8,
+            "name": "ROAD_NETWORK",
+            "default": null,
+            "geometry_types": [1, 2],
+            "data_types": [-1],
+            "value_hints": []
+        },
+        "MAX_DIST_M": {
+            "parameter_type": "core:number",
+            "description": "Maximum road distance (metres)",
+            "flags": 8,
+            "name": "MAX_DIST_M",
+            "default": 2000.0,
+            "min": 0.0,
+            "max": 1e+09,
+            "data_type": 1
+        }
+    },
+    "values": {
+        "CELL_SITE": null,
+        "POWER_SOURCES": null,
+        "ROAD_NETWORK": null,
+        "MAX_DIST_M": 2000.0
+    },
+    "childAlgorithms": {
+        "native:shortestpathpointtolayer_1": {
+            "alg_id": "native:shortestpathpointtolayer",
+            "alg_map": {
+                "DEFAULT_DIRECTION": 2,
+                "DEFAULT_SPEED": 50.0,
+                "DIRECTION_FIELD": null,
+                "END_POINTS": {
+                    "type": "data_defined",
+                    "base": "model",
+                    "name": "POWER_SOURCES"
+                },
+                "INPUT": {
+                    "type": "data_defined",
+                    "base": "model",
+                    "name": "ROAD_NETWORK"
+                },
+                "OUTPUT": {
+                    "name": "outputpaths",
+                    "description": "All shortest paths (unfiltered)"
+                },
+                "SPEED_FIELD": null,
+                "START_POINT": {
+                    "type": "data_defined",
+                    "base": "model",
+                    "name": "CELL_SITE",
+                    "onefeature": true
+                },
+                "STRATEGY": 0,
+                "TOLERANCE": 0.0,
+                "VALUE_BACKWARD": "",
+                "VALUE_BOTH": "",
+                "VALUE_FORWARD": ""
+            },
+            "component": {
+                "description": "Shortest Path (Point to Layer) — undirected",
+                "position": {
+                    "x": 320.0,
+                    "y": 120.0
+                }
+            },
+            "dependencies": [],
+            "id": "native:shortestpathpointtolayer_1",
+            "is_active": true,
+            "outputs": {
+                "OUTPUT": "outputpaths"
+            },
+            "results_names": {}
+        },
+        "native:extractbyexpression_1": {
+            "alg_id": "native:extractbyexpression",
+            "alg_map": {
+                "EXPRESSION": {
+                    "type": "static",
+                    "val": "\"cost\" <= @MAX_DIST_M"
+                },
+                "INPUT": {
+                    "type": "data_defined",
+                    "base": "native:shortestpathpointtolayer_1",
+                    "name": "OUTPUT"
+                },
+                "OUTPUT": {
+                    "name": "PATHS_WITHIN_LIMIT",
+                    "description": "Road paths within distance limit"
+                },
+                "FAIL_OUTPUT": {
+                    "name": "PATHS_BEYOND_LIMIT",
+                    "description": "Road paths beyond distance limit (discarded)"
+                }
+            },
+            "component": {
+                "description": "Filter by road distance ≤ MAX_DIST_M",
+                "position": {
+                    "x": 600.0,
+                    "y": 120.0
+                }
+            },
+            "dependencies": [
+                "native:shortestpathpointtolayer_1"
+            ],
+            "id": "native:extractbyexpression_1",
+            "is_active": true,
+            "outputs": {
+                "OUTPUT": "PATHS_WITHIN_LIMIT"
+            },
+            "results_names": {}
+        },
+        "native:addautoincrementalfield_1": {
+            "alg_id": "native:addautoincrementalfield",
+            "alg_map": {
+                "FIELD_NAME": "path_rank",
+                "GROUP_FIELDS": [],
+                "INPUT": {
+                    "type": "data_defined",
+                    "base": "native:extractbyexpression_1",
+                    "name": "OUTPUT"
+                },
+                "MODULUS": 0,
+                "OUTPUT": {
+                    "name": "RANKED_PATHS",
+                    "description": "Ranked road paths (nearest first)"
+                },
+                "SORT_ASCENDING": true,
+                "SORT_EXPRESSION": "\"cost\"",
+                "SORT_NULLS_FIRST": false,
+                "START": 1
+            },
+            "component": {
+                "description": "Rank paths by distance (nearest = 1)",
+                "position": {
+                    "x": 880.0,
+                    "y": 120.0
+                }
+            },
+            "dependencies": [
+                "native:extractbyexpression_1"
+            ],
+            "id": "native:addautoincrementalfield_1",
+            "is_active": true,
+            "outputs": {
+                "OUTPUT": "RANKED_PATHS"
+            },
+            "results_names": {}
+        }
+    },
+    "modelOutputs": {
+        "PATHS": {
+            "child_id": "native:addautoincrementalfield_1",
+            "output_name": "OUTPUT",
+            "description": "Road paths to power sources (ranked, ≤ max distance)"
+        }
+    },
+    "helpContent": {
+        "SHORT_DESCRIPTION": "Finds all road paths from a cell site to nearby substations or electric poles using an undirected road network. Paths longer than the maximum distance are discarded. Results are ranked nearest-first and include the full polyline geometry and road distance (metres) in the `cost` field.",
+        "INPUTS": {
+            "CELL_SITE": "Single-point layer representing the cell site origin.",
+            "POWER_SOURCES": "Point layer of substations and/or electric poles to route to.",
+            "ROAD_NETWORK": "Line layer of the road network. OSM data downloaded via QuickOSM or an existing local dataset. Direction is ignored — the network is treated as undirected.",
+            "MAX_DIST_M": "Maximum allowable road distance in metres. Paths longer than this value are dropped. Default: 2000 m."
+        },
+        "OUTPUTS": {
+            "PATHS": "Line layer: one feature per reachable power source, geometry = road path polyline, attributes include `cost` (road distance in map units / metres) and `path_rank` (1 = nearest)."
+        },
+        "NOTES": "The model uses QGIS native:shortestpathpointtolayer with DEFAULT_DIRECTION = 2 (Both Directions), which makes the network fully undirected — road one-way signs are ignored. Ensure the road network and power-source layers share the same CRS (EPSG:3857 or a local metric projection recommended for accurate metre-based distances)."
+    }
+}

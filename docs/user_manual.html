@@ -1,0 +1,1074 @@
+<title>3W+ Platform — User Manual</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* ── Tokens ─────────────────────────────────────────────────────────────── */
+:root {
+  --navy:    #001E62;
+  --navy-2:  #002882;
+  --navy-dk: #030b1f;
+  --yellow:  #FFD100;
+  --yellow-2:#FFC000;
+  --cyan:    #00A3E0;
+  --cyan-dk: #007eb0;
+  --white:   #ffffff;
+  --off-white:#f0f4ff;
+  --muted:   rgba(255,255,255,0.55);
+  --card-bg: #071535;
+  --card-border: rgba(255,209,0,0.15);
+  --text:    #e8eeff;
+  --text-dim:#7f94c2;
+  --radius:  12px;
+  --sidebar-w: 220px;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --navy-dk: #f0f4ff;
+    --card-bg: #ffffff;
+    --card-border: rgba(0,30,98,0.12);
+    --text:    #001E62;
+    --text-dim:#4a5a8a;
+    --muted:   rgba(0,30,98,0.5);
+    --off-white:#e8eeff;
+  }
+}
+:root[data-theme="dark"] {
+  --navy-dk: #030b1f; --card-bg: #071535; --card-border: rgba(255,209,0,0.15);
+  --text: #e8eeff; --text-dim: #7f94c2; --muted: rgba(255,255,255,0.55); --off-white: #f0f4ff;
+}
+:root[data-theme="light"] {
+  --navy-dk: #f0f4ff; --card-bg: #ffffff; --card-border: rgba(0,30,98,0.12);
+  --text: #001E62; --text-dim: #4a5a8a; --muted: rgba(0,30,98,0.5); --off-white: #e8eeff;
+}
+
+/* ── Reset / base ───────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; font-size: 15px; }
+body {
+  background: var(--navy-dk);
+  color: var(--text);
+  font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  line-height: 1.65;
+  min-height: 100vh;
+}
+a { color: var(--cyan); text-decoration: none; }
+a:hover { color: var(--yellow); }
+img { max-width: 100%; }
+code, pre {
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.85em;
+}
+
+/* ── Hero ───────────────────────────────────────────────────────────────── */
+.hero {
+  position: relative;
+  background: var(--navy);
+  overflow: hidden;
+  padding: 64px 48px 80px;
+}
+.hero::before {
+  content: '';
+  position: absolute;
+  top: -60px; right: -80px;
+  width: 600px; height: 500px;
+  background: var(--yellow);
+  transform: rotate(-18deg);
+  opacity: 0.12;
+  pointer-events: none;
+}
+.hero::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, var(--yellow) 0%, var(--cyan) 60%, transparent 100%);
+}
+.hero-stripe {
+  position: absolute;
+  top: 0; right: 0;
+  width: 420px; height: 100%;
+  background: linear-gradient(160deg, var(--yellow) 0%, var(--yellow-2) 40%, transparent 70%);
+  opacity: 0.08;
+  pointer-events: none;
+}
+.hero-eyebrow {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--yellow);
+  background: rgba(255,209,0,0.1);
+  border: 1px solid rgba(255,209,0,0.3);
+  border-radius: 4px;
+  padding: 3px 10px;
+  margin-bottom: 20px;
+}
+.hero h1 {
+  font-size: clamp(2.2rem, 5vw, 3.6rem);
+  font-weight: 900;
+  letter-spacing: -0.04em;
+  line-height: 1.06;
+  color: var(--white);
+  max-width: 700px;
+}
+.hero h1 span { color: var(--yellow); }
+.hero-sub {
+  margin-top: 16px;
+  font-size: 1.05rem;
+  color: rgba(255,255,255,0.65);
+  max-width: 560px;
+  line-height: 1.55;
+}
+.hero-meta {
+  margin-top: 28px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  font-size: 0.8rem;
+  color: rgba(255,255,255,0.4);
+}
+.hero-meta span { display: flex; align-items: center; gap: 5px; }
+.hero-meta b { color: rgba(255,255,255,0.75); }
+
+/* ── Layout shell ───────────────────────────────────────────────────────── */
+.shell {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr;
+  max-width: 1180px;
+  margin: 0 auto;
+  gap: 0 36px;
+  padding: 48px 24px 80px;
+  align-items: start;
+}
+@media (max-width: 780px) {
+  .shell { grid-template-columns: 1fr; }
+  .toc { display: none; }
+  .hero { padding: 40px 24px 56px; }
+}
+
+/* ── TOC sidebar ────────────────────────────────────────────────────────── */
+.toc {
+  position: sticky;
+  top: 24px;
+  padding: 20px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  font-size: 0.8rem;
+}
+.toc-title {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--yellow);
+  margin-bottom: 14px;
+}
+.toc a {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text-dim);
+  padding: 4px 0;
+  border-left: 2px solid transparent;
+  padding-left: 10px;
+  transition: color 0.15s, border-color 0.15s;
+  line-height: 1.4;
+}
+.toc a:hover { color: var(--yellow); border-left-color: var(--yellow); }
+.toc a.sub { padding-left: 22px; font-size: 0.75rem; color: var(--text-dim); opacity: 0.75; }
+.toc a.sub:hover { opacity: 1; }
+.toc-num { font-family: monospace; font-size: 0.7em; color: var(--yellow); min-width: 20px; }
+
+/* ── Content ────────────────────────────────────────────────────────────── */
+.content { min-width: 0; }
+
+.section {
+  margin-bottom: 56px;
+  scroll-margin-top: 24px;
+}
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 20px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--card-border);
+}
+.section-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px; height: 34px;
+  background: var(--yellow);
+  color: var(--navy);
+  font-size: 0.75rem;
+  font-weight: 900;
+  border-radius: 6px;
+  flex-shrink: 0;
+  letter-spacing: 0;
+}
+.section h2 {
+  font-size: 1.45rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  color: var(--text);
+}
+.section h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 24px 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.section h3::before {
+  content: '';
+  display: inline-block;
+  width: 3px; height: 14px;
+  background: var(--yellow);
+  border-radius: 2px;
+}
+.section p { margin-bottom: 12px; color: var(--text); }
+.section ul, .section ol {
+  margin: 8px 0 14px 20px;
+  color: var(--text);
+}
+.section li { margin-bottom: 5px; line-height: 1.55; }
+.section li::marker { color: var(--yellow); }
+
+/* ── Cards ──────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  padding: 20px 22px;
+  margin-bottom: 16px;
+}
+.card-accent {
+  border-left: 3px solid var(--yellow);
+}
+.card-cyan {
+  border-left: 3px solid var(--cyan);
+}
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.feature-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.feature-icon {
+  width: 34px; height: 34px;
+  background: rgba(255,209,0,0.12);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--yellow);
+}
+.feature-card h4 {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.feature-card p { font-size: 0.78rem; color: var(--text-dim); margin: 0; }
+
+/* ── Role badges ────────────────────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  border-radius: 4px;
+  padding: 2px 8px;
+  text-transform: uppercase;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+.badge-yellow { background: rgba(255,209,0,0.15); color: var(--yellow); }
+.badge-cyan   { background: rgba(0,163,224,0.15); color: var(--cyan); }
+.badge-red    { background: rgba(255,80,80,0.15);  color: #ff6b6b; }
+.badge-green  { background: rgba(0,200,100,0.15);  color: #33e08a; }
+
+/* ── Steps ──────────────────────────────────────────────────────────────── */
+.steps { counter-reset: step; display: flex; flex-direction: column; gap: 12px; }
+.step {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+}
+.step-num {
+  counter-increment: step;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px; height: 26px;
+  min-width: 26px;
+  background: var(--navy);
+  border: 2px solid var(--yellow);
+  color: var(--yellow);
+  font-size: 0.75rem;
+  font-weight: 800;
+  border-radius: 50%;
+}
+.step-body { font-size: 0.88rem; }
+.step-body strong { color: var(--text); }
+.step-body p { color: var(--text-dim); margin: 4px 0 0; font-size: 0.82rem; }
+
+/* ── Code block ─────────────────────────────────────────────────────────── */
+.codeblock {
+  background: #010814;
+  border: 1px solid rgba(0,163,224,0.2);
+  border-left: 3px solid var(--cyan);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  font-family: 'Cascadia Code','Fira Code','Consolas',monospace;
+  font-size: 0.82rem;
+  color: #a0d8ef;
+  overflow-x: auto;
+  margin: 12px 0;
+  line-height: 1.6;
+}
+.codeblock .c { color: #4a6080; }
+.codeblock .k { color: var(--yellow); }
+.codeblock .s { color: #7ec8a0; }
+
+/* ── Table ──────────────────────────────────────────────────────────────── */
+.tbl-wrap { overflow-x: auto; margin: 12px 0; border-radius: var(--radius); }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+thead tr { background: var(--navy); }
+thead th {
+  padding: 10px 14px;
+  text-align: left;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--yellow);
+  white-space: nowrap;
+}
+tbody tr {
+  border-bottom: 1px solid var(--card-border);
+  transition: background 0.1s;
+}
+tbody tr:hover { background: rgba(255,209,0,0.04); }
+tbody td { padding: 9px 14px; color: var(--text); vertical-align: top; }
+tbody td:first-child { color: var(--cyan); font-weight: 600; font-size: 0.8rem; }
+
+/* ── Callout ────────────────────────────────────────────────────────────── */
+.callout {
+  border-radius: var(--radius);
+  padding: 13px 16px;
+  font-size: 0.85rem;
+  display: flex;
+  gap: 10px;
+  margin: 14px 0;
+  line-height: 1.5;
+}
+.callout-icon { flex-shrink: 0; width: 18px; height: 18px; margin-top: 1px; }
+.callout-tip  { background: rgba(255,209,0,0.08); border: 1px solid rgba(255,209,0,0.2); color: var(--text); }
+.callout-tip .callout-icon { color: var(--yellow); }
+.callout-info { background: rgba(0,163,224,0.08); border: 1px solid rgba(0,163,224,0.2); color: var(--text); }
+.callout-info .callout-icon { color: var(--cyan); }
+.callout-warn { background: rgba(255,120,50,0.08); border: 1px solid rgba(255,120,50,0.2); color: var(--text); }
+.callout-warn .callout-icon { color: #ff9050; }
+
+/* ── Section divider ────────────────────────────────────────────────────── */
+.divider {
+  height: 2px;
+  background: linear-gradient(90deg, var(--yellow) 0%, var(--cyan) 50%, transparent 100%);
+  opacity: 0.18;
+  margin: 0 0 48px;
+  border-radius: 2px;
+}
+
+/* ── Topbar ─────────────────────────────────────────────────────────────── */
+.topbar {
+  background: rgba(0,30,98,0.95);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255,209,0,0.15);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  padding: 10px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 900;
+  font-size: 1rem;
+  color: var(--white);
+  letter-spacing: -0.02em;
+}
+.topbar-brand-dot { color: var(--yellow); }
+.topbar-links {
+  display: flex;
+  gap: 20px;
+  font-size: 0.78rem;
+  color: rgba(255,255,255,0.5);
+}
+.topbar-links a { color: rgba(255,255,255,0.55); }
+.topbar-links a:hover { color: var(--yellow); }
+
+/* ── Footer ─────────────────────────────────────────────────────────────── */
+footer {
+  background: var(--navy);
+  border-top: 1px solid rgba(255,209,0,0.15);
+  text-align: center;
+  padding: 28px 24px;
+  font-size: 0.78rem;
+  color: rgba(255,255,255,0.3);
+}
+footer strong { color: var(--yellow); }
+
+/* ── Print ──────────────────────────────────────────────────────────────── */
+@media print {
+  .topbar, .toc { display: none; }
+  .shell { grid-template-columns: 1fr; padding: 0; }
+  body { background: white; color: black; }
+  .hero { background: #001E62; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+</style>
+
+<!-- ─ TOPBAR ──────────────────────────────────────────────────────────────── -->
+<div class="topbar">
+  <div class="topbar-brand">3W<span class="topbar-brand-dot">+</span> &nbsp;<span style="font-weight:400;font-size:0.8rem;color:rgba(255,255,255,0.4)">User Manual</span></div>
+  <div class="topbar-links">
+    <a href="#getting-started">Start</a>
+    <a href="#dashboard">Dashboard</a>
+    <a href="#map">Map</a>
+    <a href="#chat">Chat</a>
+    <a href="#qgis">QGIS</a>
+  </div>
+</div>
+
+<!-- ─ HERO ────────────────────────────────────────────────────────────────── -->
+<div class="hero">
+  <div class="hero-stripe"></div>
+  <div class="hero-eyebrow">Official Documentation &nbsp;·&nbsp; v2.0</div>
+  <h1>3W<span>+</span> Platform<br>User Manual</h1>
+  <p class="hero-sub">RAN congestion analytics, AI-assisted planning, interactive GIS mapping, and project management — built for CelcomDigi's network engineering teams.</p>
+  <div class="hero-meta">
+    <span><b>Platform:</b> Web (Docker / AWS)</span>
+    <span><b>Stack:</b> FastAPI · React 19 · DuckDB · MapLibre GL</span>
+    <span><b>Roles:</b> User · Admin · Super Admin</span>
+  </div>
+</div>
+
+<!-- ─ SHELL ───────────────────────────────────────────────────────────────── -->
+<div class="shell">
+
+  <!-- TOC -->
+  <nav class="toc" aria-label="Table of contents">
+    <div class="toc-title">Contents</div>
+    <a href="#overview"><span class="toc-num">01</span> Overview</a>
+    <a href="#getting-started"><span class="toc-num">02</span> Getting Started</a>
+    <a href="#dashboard"><span class="toc-num">03</span> RAN Forecast</a>
+    <a class="sub" href="#dashboard-filters">Filters</a>
+    <a class="sub" href="#dashboard-capex">CAPEX</a>
+    <a class="sub" href="#dashboard-charts">Charts</a>
+    <a href="#map"><span class="toc-num">04</span> Map</a>
+    <a class="sub" href="#map-layers">Coverage Layers</a>
+    <a class="sub" href="#map-genset">Genset Routing</a>
+    <a class="sub" href="#map-cctv">CCTV Planning</a>
+    <a class="sub" href="#map-annotations">Annotations</a>
+    <a class="sub" href="#map-indoor">Indoor Sim</a>
+    <a href="#projects"><span class="toc-num">05</span> Projects</a>
+    <a href="#chat"><span class="toc-num">06</span> Chat / AI Agent</a>
+    <a href="#capex-page"><span class="toc-num">07</span> CAPEX</a>
+    <a href="#notes"><span class="toc-num">08</span> Notes</a>
+    <a href="#data-mgmt"><span class="toc-num">09</span> Data Management</a>
+    <a href="#super-admin"><span class="toc-num">10</span> Super Admin</a>
+    <a href="#qgis"><span class="toc-num">11</span> QGIS Model</a>
+    <a href="#roles"><span class="toc-num">A</span> Role Reference</a>
+    <a href="#troubleshoot"><span class="toc-num">B</span> Troubleshooting</a>
+  </nav>
+
+  <!-- CONTENT -->
+  <main class="content">
+
+    <!-- ── 01 Overview ── -->
+    <section class="section" id="overview">
+      <div class="section-header">
+        <div class="section-num">01</div>
+        <h2>Platform Overview</h2>
+      </div>
+      <p>3W+ is CelcomDigi's internal RAN analytics and site-planning platform. It consolidates congestion monitoring, CAPEX planning, AI-assisted querying, and GIS-based field-planning workflows into a single web application accessible from any browser.</p>
+
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          </div>
+          <h4>RAN Forecast</h4>
+          <p>Sector-level congestion, PRB utilisation, and 52-week ML forecasts across the full network.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
+          </div>
+          <h4>Interactive Map</h4>
+          <p>MapLibre GL map with coverage overlays, road-routing, CCTV siting, indoor simulation, and draw tools.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </div>
+          <h4>AI Chat Agent</h4>
+          <p>Natural-language querying of network data via LangGraph + Claude, with RAG over uploaded documents.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          </div>
+          <h4>Projects</h4>
+          <p>Kanban board for network planning tasks with due dates, status tracking, and map-linked annotations.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          </div>
+          <h4>CAPEX Planner</h4>
+          <p>Upgrade-case breakdowns, region summaries, and per-site CAPEX estimates.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+          </div>
+          <h4>Data Management</h4>
+          <p>Upload and pipeline raw CSV/Parquet datasets. Trigger ETL stages individually or as a full run.</p>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <svg class="callout-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <div>3W+ runs as a containerised web service. Access it via your organisation's internal URL. No installation is required — a modern browser (Chrome, Edge, Firefox) is sufficient.</div>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- ── 02 Getting Started ── -->
+    <section class="section" id="getting-started">
+      <div class="section-header">
+        <div class="section-num">02</div>
+        <h2>Getting Started</h2>
+      </div>
+
+      <h3>Logging In</h3>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body"><strong>Open the platform URL</strong> in your browser (e.g. <code>https://3w.celcomdigi.internal/</code>). You will be redirected to the login page if not authenticated.</div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-body"><strong>Enter your username and password.</strong><p>Credentials are provisioned by your Super Admin. Contact IT if you need an account.</p></div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-body"><strong>Click Log In.</strong><p>You are redirected to the RAN Forecast dashboard. The navigation bar at the top shows all modules available to your role.</p></div>
+        </div>
+      </div>
+
+      <h3>Navigation</h3>
+      <p>The top navigation bar is present on every page:</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Link</th><th>Module</th><th>Access</th></tr></thead>
+          <tbody>
+            <tr><td>RAN Forecast</td><td>Congestion dashboard, sector metrics, CAPEX overview</td><td>All users</td></tr>
+            <tr><td>Map</td><td>Interactive GIS map with all spatial tools</td><td>All users</td></tr>
+            <tr><td>Notes</td><td>Personal and shared notes</td><td>All users</td></tr>
+            <tr><td>Projects</td><td>Kanban project and task management</td><td>All users</td></tr>
+            <tr><td>Chat</td><td>AI agent for natural-language data queries</td><td>All users</td></tr>
+            <tr><td>CAPEX</td><td>Detailed CAPEX analysis and upgrade cases</td><td>All users</td></tr>
+            <tr><td>Data</td><td>Dataset upload and ETL pipeline control</td><td><span class="badge badge-cyan">Admin</span></td></tr>
+            <tr><td>Super Admin</td><td>User management and system settings</td><td><span class="badge badge-red">Super Admin</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>User Roles</h3>
+      <div class="card card-accent">
+        <p style="margin:0 0 10px;font-size:0.85rem;font-weight:700;">Three roles control feature access:</p>
+        <ul style="margin:0 0 0 16px;">
+          <li><span class="badge badge-green">User</span> — Read-only analytics, map tools, projects, chat, notes, CAPEX.</li>
+          <li><span class="badge badge-cyan">Admin</span> — Everything above, plus the Data Management page (upload datasets, trigger ETL).</li>
+          <li><span class="badge badge-red">Super Admin</span> — Everything above, plus user creation, role assignment, and system-level settings.</li>
+        </ul>
+      </div>
+
+      <h3>Profile Settings</h3>
+      <p>Click your initials avatar in the top-right corner to open the profile menu. From there you can change your display name, update your password, and adjust notification preferences.</p>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- ── 03 Dashboard ── -->
+    <section class="section" id="dashboard">
+      <div class="section-header">
+        <div class="section-num">03</div>
+        <h2>RAN Forecast Dashboard</h2>
+      </div>
+      <p>The dashboard is the home screen. It gives a network-wide view of congestion, sector performance, and CAPEX requirements derived from the latest ingested dataset.</p>
+
+      <h3 id="dashboard-filters">Filter Bar</h3>
+      <p>All dashboard data responds to the four global filters at the top of the page:</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Filter</th><th>Options</th><th>Effect</th></tr></thead>
+          <tbody>
+            <tr><td>Region</td><td>All, CENTRAL, EASTERN, NORTHERN, SABAH, SARAWAK, SOUTHERN</td><td>Scopes all metrics and tables to the selected region</td></tr>
+            <tr><td>Year</td><td>Available years in dataset</td><td>Locks the data snapshot to that year</td></tr>
+            <tr><td>Week</td><td>ISO weeks present in dataset</td><td>Locks to a specific reporting week</td></tr>
+            <tr><td>Operator</td><td>Celcom, Digi, All</td><td>Filters sector-level data by operator</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Summary Statistics</h3>
+      <p>Three KPI cards appear below the filters showing <strong>Total Sectors</strong>, <strong>Congested Sectors</strong>, and <strong>Average Data Volume (GB)</strong>. A bar below the congested count shows the percentage of congested sectors at a glance.</p>
+
+      <h3 id="dashboard-capex">CAPEX Overview</h3>
+      <p>The CAPEX panel breaks down upgrade costs two ways:</p>
+      <ul>
+        <li><strong>By upgrade case</strong> — each of the 11 upgrade-case types (e.g. Case 2 Add Bi-Sector, Case 3 Add Network Layer) with sector count and estimated cost.</li>
+        <li><strong>By region</strong> — total CAPEX and sector count per geographic region.</li>
+        <li><strong>Top sites table</strong> — the sites requiring the most upgrades, sorted by total CAPEX.</li>
+      </ul>
+
+      <h3 id="dashboard-charts">Sector Performance Tabs</h3>
+      <p>Three tabs give progressively deeper sector detail:</p>
+      <div class="card card-accent">
+        <p><strong>Sector Performance Metrics</strong> — paginated table of every sector with PRB%, throughput, volume, and congestion status. Use the search box to jump to a specific sector ID.</p>
+      </div>
+      <div class="card card-accent">
+        <p><strong>Future Forecasts</strong> — ML-predicted PRB%, data volume, or DL throughput for each sector over your chosen horizon (4, 8, 13, or 26 weeks). Expand a sector row to see the full time-series chart.</p>
+      </div>
+      <div class="card card-accent">
+        <p><strong>Congested Sectors</strong> — only sectors flagged as congested, with the number of consecutive congested weeks highlighted. Use this for prioritising site-planning actions.</p>
+      </div>
+
+      <div class="callout callout-tip">
+        <svg class="callout-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        <div>Click <strong>Export Combined Dataset</strong> at the top of the page to download the full filtered dataset as CSV for offline analysis.</div>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- ── 04 Map ── -->
+    <section class="section" id="map">
+      <div class="section-header">
+        <div class="section-num">04</div>
+        <h2>Interactive Map</h2>
+      </div>
+      <p>The Map page is the spatial heart of 3W+. It renders a live MapLibre GL map of Peninsular Malaysia centred on the full network. A toolbar on the left provides all spatial tools.</p>
+
+      <h3 id="map-layers">Coverage Layers</h3>
+      <p>Toggle overlay layers from the <strong>Layers</strong> panel (top-right of the map):</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Layer</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>Healthy sites</td><td>Green dots — sites with no congested sectors</td></tr>
+            <tr><td>Congested sites</td><td>Red dots — sites with ≥1 congested sector</td></tr>
+            <tr><td>Heatmap</td><td>Density heatmap of congested sectors</td></tr>
+            <tr><td>5G / 4G / 3G / 2G coverage</td><td>Raster coverage tiles per technology</td></tr>
+            <tr><td>Signal strength</td><td>RSRP bands (-100 to -120, -121 to -130, &lt;-130 dBm)</td></tr>
+            <tr><td>Coverage holes</td><td>Clusters of poor-signal drive-test points</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="map-genset">Genset / Power Source Routing</h3>
+      <p>The <strong>Genset Routing</strong> tool finds the nearest substations and electric poles to a selected cell site via road network — not straight-line distance — so the result reflects an accessible cable path.</p>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body"><strong>Click a site marker</strong> on the map to select it, or use the site-search field to fly to a site by ID.</div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-body"><strong>Open the Genset panel</strong> from the toolbar. The panel shows Substations and Electric Poles tabs.<p>The road network is downloaded automatically within a 2.5 km buffer around the site.</p></div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-body"><strong>Results appear</strong> sorted by road distance (nearest first). Each result shows the power-source name, road distance in metres, and a polyline drawn on the map tracing the actual road path.</div>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <div class="step-body"><strong>Click a result row</strong> to highlight that specific path on the map and fly to it.</div>
+        </div>
+      </div>
+      <div class="callout callout-info">
+        <svg class="callout-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <div>Only power sources reachable within <strong>2 km by road</strong> are returned. Road direction is ignored — the routing treats all roads as bidirectional. Substations are fetched from your uploaded layer (if available) or from OpenStreetMap Overpass.</div>
+      </div>
+
+      <h3 id="map-cctv">CCTV Camera Planning</h3>
+      <p>The CCTV tool calculates the optimal placement and field-of-view for surveillance cameras around a site. Click a site, open the CCTV panel, set the camera range and angle parameters, then click <strong>Run Analysis</strong>. Camera footprints appear as arcs on the map.</p>
+
+      <h3 id="map-annotations">Draw & Annotate</h3>
+      <p>The draw toolbar supports four geometry types:</p>
+      <ul>
+        <li><strong>Point</strong> — drop a marker at any location</li>
+        <li><strong>Line</strong> — trace a route or cable path</li>
+        <li><strong>Polygon</strong> — define a coverage zone or planning boundary</li>
+        <li><strong>Buffer</strong> — place a point and set a radius to generate a circular coverage area</li>
+      </ul>
+      <p>Each annotation can be tagged with a label and attached to a <strong>Project</strong> so it appears in that project's map view in the Projects module.</p>
+
+      <h3 id="map-indoor">Indoor Coverage Simulation</h3>
+      <p>The <strong>Sionna RT</strong> indoor simulator models signal propagation through a building floor plan. Upload a floor-plan image, place transmitter and receiver points, and run the ray-tracing simulation. The resulting heatmap is overlaid on the floor plan showing predicted signal strength per location.</p>
+
+      <h3>GeoServer Layers</h3>
+      <p>Admin-uploaded GeoServer layers (WMS/WFS) appear in the Layers panel. These can include district boundaries, planning zones, or operator-specific spatial datasets.</p>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- ── 05 Projects ── -->
+    <section class="section" id="projects">
+      <div class="section-header">
+        <div class="section-num">05</div>
+        <h2>Projects</h2>
+      </div>
+      <p>Projects provides a lightweight kanban board for managing network-planning work items. Each project has tasks and optionally a set of map annotations.</p>
+
+      <h3>Creating a Project</h3>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body"><strong>Click + New</strong> in the Projects sidebar. Enter a project name and an optional description.</div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-body"><strong>The project appears</strong> in the sidebar list. Click it to open its detail view (map + kanban board).</div>
+        </div>
+      </div>
+
+      <h3>Kanban Board</h3>
+      <p>Tasks move across three columns:</p>
+      <div class="feature-grid" style="grid-template-columns:repeat(3,1fr)">
+        <div class="feature-card">
+          <h4 style="color:var(--text-dim)">To Do</h4>
+          <p>Not yet started. Newly created tasks land here.</p>
+        </div>
+        <div class="feature-card">
+          <h4 style="color:var(--cyan)">In Progress</h4>
+          <p>Actively being worked on.</p>
+        </div>
+        <div class="feature-card">
+          <h4 style="color:#33e08a">Done</h4>
+          <p>Completed. Counts toward the project's progress percentage.</p>
+        </div>
+      </div>
+      <p>Use the <strong>Start / Complete / Reopen</strong> buttons on each task card to advance its status. Tasks with a due date appear in the <strong>Gantt chart</strong> below the board.</p>
+
+      <h3>Rollout Phase Timeline</h3>
+      <p>If a project's tasks follow the naming pattern <code>[P0] Site Selection</code>, <code>[P1] Feasibility Study</code>, … <code>[P10] Go Live</code>, a rollout progress bar appears above the kanban board tracking all 11 standard phases automatically.</p>
+
+      <h3>Map Annotations</h3>
+      <p>Annotations drawn on the Map page and tagged to a project appear on the project's embedded mini-map. The map zooms to fit all annotations automatically.</p>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- ── 06 Chat ── -->
+    <section class="section" id="chat">
+      <div class="section-header">
+        <div class="section-num">06</div>
+        <h2>Chat / AI Agent</h2>
+      </div>
+      <p>The Chat page provides a conversational interface to your network data, powered by LangGraph and Claude. The agent can query DuckDB analytics, search RAG-indexed documents, and generate recommendations.</p>
+
+      <h3>Example Queries</h3>
+      <div class="card card-cyan" style="margin-bottom:10px">
+        <p style="margin:0;font-style:italic;color:var(--cyan)">"Which sectors in the SOUTHERN region have been congested for more than 8 consecutive weeks?"</p>
+      </div>
+      <div class="card card-cyan" style="margin-bottom:10px">
+        <p style="margin:0;font-style:italic;color:var(--cyan)">"What is the total CAPEX required for Case 2 upgrades in Johor?"</p>
+      </div>
+      <div class="card card-cyan">
+        <p style="margin:0;font-style:italic;color:var(--cyan)">"Summarise the key findings from the Q3 network audit report."</p>
+      </div>
+
+      <h3>RAG Document Search</h3>
+      <p>Documents uploaded to the system (PDF reports, planning notes, audit records) are indexed with pgvector embeddings. The agent automatically retrieves relevant passages when a question touches topics covered in those documents.</p>
+
+      <div class="callout callout-warn">
+        <svg class="callout-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <div>The AI agent's answers are generated from your data and should be treated as analytical support, not authoritative decisions. Always verify critical figures against the source dashboards.</div>
+      </div>
+
+      <h3>Model</h3>
+      <p>In production the agent uses <strong>Claude</strong> (Anthropic). In local development without an API key it falls back to a local <strong>Ollama</strong> model automatically. The active model is shown at the top of the chat panel.</p>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- ── 07 CAPEX ── -->
+    <section class="section" id="capex-page">
+      <div class="section-header">
+        <div class="section-num">07</div>
+        <h2>CAPEX Planner</h2>
+      </div>
+      <p>The CAPEX page provides a detailed breakdown of upgrade costs derived from the congestion analysis. All figures use the upgrade-case framework defined in the data pipeline.</p>
+
+      <h3>Upgrade Cases</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Case</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>Case 2</td><td>Add Bi-Sector Only</td></tr>
+            <tr><td>Case 3</td><td>Add Network Layer Only</td></tr>
+            <tr><td>Case 5</td><td>Add Bandwidth + Add Layer</td></tr>
+            <tr><td>Case 6</td><td>Add Bi-Sector + Add Bandwidth</td></tr>
+            <tr><td>Case 7</td><td>Add Bi-Sector + Add Layer</td></tr>
+            <tr><td>Case 8</td><td>Add IBC</td></tr>
+            <tr><td>Case 9</td><td>Add BI/2</td></tr>
+            <tr><td>Case 10</td><td>Accelerate NIC</td></tr>
+            <tr><td>Case 11</td><td>NNS (New Network Site)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Combined cases (e.g. Case 3 + Case 10) are shown as compound entries where both interventions are required for a sector.</p>
+
+      <h3>Filtering</h3>
+      <p>Use the Region filter dropdown and the Site search field to scope the CAPEX tables. The export function at the top-right downloads the filtered view as CSV.</p>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- ── 08 Notes ── -->
+    <section class="section" id="notes">
+      <div class="section-header">
+        <div class="section-num">08</div>
+        <h2>Notes</h2>
+      </div>
+      <p>Notes is a lightweight rich-text workspace for storing observations, meeting minutes, or planning decisions alongside your network data.</p>
+      <ul>
+        <li>Click <strong>+ New Note</strong> to create a note with a title and freeform body.</li>
+        <li>Notes are stored per-user and are visible only to you.</li>
+        <li>Use notes to document the rationale behind site-planning decisions for future reference.</li>
+      </ul>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- ── 09 Data Management ── -->
+    <section class="section" id="data-mgmt">
+      <div class="section-header">
+        <div class="section-num">09</div>
+        <h2>Data Management <span class="badge badge-cyan">Admin</span></h2>
+      </div>
+      <p>The Data page is only visible to Admin and Super Admin users. It controls the ETL pipeline that converts raw network exports into the Parquet files powering all analytics.</p>
+
+      <h3>Uploading Datasets</h3>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body"><strong>Select a dataset slot</strong> from the upload panel (e.g. Site Coordinates, Congestion Analysis, CAPEX Upgrades).</div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-body"><strong>Drag and drop</strong> a CSV or Parquet file, or click to browse. Files are validated before processing.</div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-body"><strong>Click Run Pipeline</strong> (or run individual stages) to ingest the new data. Pipeline status shows per-stage progress and any errors.</div>
+        </div>
+      </div>
+
+      <h3>Spatial Reference Layers</h3>
+      <p>Upload GeoPackage files for substations, electric poles, and planning boundaries to the appropriate slots. These are used by the Map's Genset Routing and CCTV tools instead of live Overpass API queries.</p>
+
+      <div class="callout callout-warn">
+        <svg class="callout-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <div>Running the full pipeline on a large dataset may take several minutes. Do not close the browser tab during pipeline execution.</div>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- ── 10 Super Admin ── -->
+    <section class="section" id="super-admin">
+      <div class="section-header">
+        <div class="section-num">10</div>
+        <h2>Super Admin <span class="badge badge-red">Super Admin</span></h2>
+      </div>
+      <p>The Super Admin page manages user accounts across the organisation.</p>
+
+      <h3>Creating Users</h3>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body"><strong>Click + New User.</strong> Enter a username, email, and temporary password.</div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-body"><strong>Assign a role:</strong> User, Admin, or Super Admin. Roles can be changed at any time.</div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-body"><strong>Save.</strong> The user can log in immediately and should change their password on first login.</div>
+        </div>
+      </div>
+
+      <h3>Managing Existing Users</h3>
+      <p>The user table supports searching by username or email. Click a row to edit the user's role or reset their password. Users cannot delete their own account.</p>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- ── 11 QGIS Model ── -->
+    <section class="section" id="qgis">
+      <div class="section-header">
+        <div class="section-num">11</div>
+        <h2>QGIS Road Routing Model</h2>
+      </div>
+      <p>The repository ships a QGIS Processing Model (<code>qgis_models/genset_road_routing.model3</code>) that replicates the platform's Genset Routing logic in a fully offline, QGIS-native environment — no Python backend required.</p>
+
+      <h3>What It Does</h3>
+      <p>The model finds all road paths from a <strong>cell site</strong> to nearby <strong>substations and electric poles</strong> using an undirected road network, then filters to paths under the specified maximum distance (default 2 km) and ranks results nearest-first.</p>
+
+      <h3>Loading the Model</h3>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body"><strong>Open QGIS 3.16+.</strong> Go to <em>Processing → Toolbox → Models</em> and click the folder icon (<em>Open Existing Model</em>).</div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-body"><strong>Browse to</strong> <code>qgis_models/genset_road_routing.model3</code> in the repo. The model appears under <em>MDCI</em> in the toolbox.</div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-body"><strong>Double-click the model</strong> to open the input dialog. Provide the four inputs listed below.</div>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <div class="step-body"><strong>Click Run.</strong> The output layer — one path per reachable power source — is added to the QGIS map.</div>
+        </div>
+      </div>
+
+      <h3>Inputs</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>Cell Site</td><td>Point layer</td><td>Single-point layer representing the origin cell site</td></tr>
+            <tr><td>Power Sources</td><td>Point layer</td><td>Substations and/or electric poles to route to</td></tr>
+            <tr><td>Road Network</td><td>Line layer</td><td>OSM road data (e.g. via QuickOSM) or a local road dataset</td></tr>
+            <tr><td>Max Distance (m)</td><td>Number</td><td>Cut-off road distance in metres. Default: <code>2000</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Output</h3>
+      <p>A line layer <strong>Road paths to power sources</strong> with these attributes:</p>
+      <ul>
+        <li><code>cost</code> — road distance in metres (map-unit distance)</li>
+        <li><code>path_rank</code> — integer rank (1 = nearest power source)</li>
+        <li>All attributes from the Power Sources input layer are carried through</li>
+      </ul>
+
+      <div class="codeblock"><span class="c"># CRS note: use a metric projection for accurate metre distances</span>
+<span class="c"># EPSG:32647 (UTM Zone 47N) covers Peninsular Malaysia</span>
+<span class="k">Processing</span> → <span class="k">Toolbox</span> → <span class="s">MDCI</span> → <span class="s">Cell Site to Power Source Road Routing</span></div>
+
+      <div class="callout callout-tip">
+        <svg class="callout-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        <div>For a quick road network download, install the <strong>QuickOSM</strong> QGIS plugin and run a query for <code>highway</code> within a 3 km bounding box around your site. Reproject to EPSG:32647 before running the model.</div>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- ── Appendix A — Roles ── -->
+    <section class="section" id="roles">
+      <div class="section-header">
+        <div class="section-num">A</div>
+        <h2>Role Permission Reference</h2>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Feature</th><th>User</th><th>Admin</th><th>Super Admin</th></tr></thead>
+          <tbody>
+            <tr><td>RAN Forecast dashboard</td><td>✓</td><td>✓</td><td>✓</td></tr>
+            <tr><td>Map (all tools)</td><td>✓</td><td>✓</td><td>✓</td></tr>
+            <tr><td>Projects &amp; Tasks</td><td>✓</td><td>✓</td><td>✓</td></tr>
+            <tr><td>Chat / AI Agent</td><td>✓</td><td>✓</td><td>✓</td></tr>
+            <tr><td>CAPEX page</td><td>✓</td><td>✓</td><td>✓</td></tr>
+            <tr><td>Notes</td><td>✓</td><td>✓</td><td>✓</td></tr>
+            <tr><td>Data Management</td><td>—</td><td>✓</td><td>✓</td></tr>
+            <tr><td>User management</td><td>—</td><td>—</td><td>✓</td></tr>
+            <tr><td>Role assignment</td><td>—</td><td>—</td><td>✓</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- ── Appendix B — Troubleshooting ── -->
+    <section class="section" id="troubleshoot">
+      <div class="section-header">
+        <div class="section-num">B</div>
+        <h2>Troubleshooting</h2>
+      </div>
+      <div class="card card-accent" style="margin-bottom:12px">
+        <h4 style="margin-bottom:6px;font-size:0.9rem">Dashboard shows "No data available"</h4>
+        <p style="margin:0;font-size:0.83rem;color:var(--text-dim)">No dataset has been ingested yet, or the pipeline has not been run. Ask your Admin to upload and process the latest dataset from the Data Management page.</p>
+      </div>
+      <div class="card card-accent" style="margin-bottom:12px">
+        <h4 style="margin-bottom:6px;font-size:0.9rem">Genset routing returns no results</h4>
+        <p style="margin:0;font-size:0.83rem;color:var(--text-dim)">The road network download from OSM may have timed out, or there are genuinely no substations or poles within 2 km by road. Try a site in a more urban area. If failures are consistent, ask Admin to upload a local substation GeoPackage to reduce Overpass dependency.</p>
+      </div>
+      <div class="card card-accent" style="margin-bottom:12px">
+        <h4 style="margin-bottom:6px;font-size:0.9rem">Chat agent gives outdated answers</h4>
+        <p style="margin:0;font-size:0.83rem;color:var(--text-dim)">The agent's knowledge is limited to the currently ingested dataset and indexed documents. Ensure the latest data has been processed and that relevant documents have been uploaded for RAG indexing.</p>
+      </div>
+      <div class="card card-accent" style="margin-bottom:12px">
+        <h4 style="margin-bottom:6px;font-size:0.9rem">Map layers not loading</h4>
+        <p style="margin:0;font-size:0.83rem;color:var(--text-dim)">Coverage tile layers require an internet connection to the tile CDN. GeoServer layers require the GeoServer container to be running. Check with your Admin if the backend services are up (<code>docker compose ps</code>).</p>
+      </div>
+      <div class="card card-accent">
+        <h4 style="margin-bottom:6px;font-size:0.9rem">Login fails with "Invalid credentials"</h4>
+        <p style="margin:0;font-size:0.83rem;color:var(--text-dim)">Check that Caps Lock is off. If you have forgotten your password, ask a Super Admin to reset it from the Super Admin page.</p>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- FOOTER -->
+<footer>
+  <p>3W+ Platform &nbsp;·&nbsp; <strong>CelcomDigi Internal</strong> &nbsp;·&nbsp; Not for external distribution &nbsp;·&nbsp; v2.0 &nbsp;·&nbsp; 2026</p>
+</footer>
