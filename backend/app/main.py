@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.agent.router import router as agent_router
+from app.coverage.router import router as coverage_router
 from app.analytics.router import router as analytics_router
 from app.annotations.router import router as annotations_router
 from app.auth.router import router as auth_router
@@ -49,6 +50,7 @@ app.include_router(agent_router)
 app.include_router(rag_router)
 app.include_router(datamgmt_router)
 app.include_router(geoserver_router)
+app.include_router(coverage_router)
 
 Path(settings.avatar_dir).mkdir(parents=True, exist_ok=True)
 app.mount("/avatars", StaticFiles(directory=settings.avatar_dir), name="avatars")

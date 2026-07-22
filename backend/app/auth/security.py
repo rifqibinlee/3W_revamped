@@ -6,7 +6,7 @@ import jwt
 from app.core.config import settings
 
 ALGORITHM = "HS256"
-ACCESS_TOKEN_TTL = timedelta(minutes=30)
+ACCESS_TOKEN_TTL = timedelta(hours=12)
 REFRESH_TOKEN_TTL = timedelta(days=7)
 
 

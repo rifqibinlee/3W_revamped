@@ -4,8 +4,9 @@
     {
       "name": "3w-frontend",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "frontend"],
-      "port": 5180
+      "runtimeArgs": ["run", "dev"],
+      "port": 5173,
+      "cwd": "C:\\Users\\mrifq\\OneDrive\\Desktop\\MAKING BANK\\3W_revamped\\frontend"
     },
     {
       "name": "3w-backend",

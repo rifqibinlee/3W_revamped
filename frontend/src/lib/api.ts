@@ -270,6 +270,20 @@ export interface NearbyFeature {
   properties: Record<string, unknown>
 }
 
+export interface GensetPowerSource {
+  power_source_type: 'Substation' | 'Electric Pole'
+  name: string
+  osm_id: string
+  operator: string
+  voltage: string
+  lat: number
+  lon: number
+  dist_m: number
+  dist_km: number
+  dist_type: string
+  powertype?: string
+}
+
 export interface GensetRouteResult {
   site: { lat: number; lng: number }
   results: { name: string; lat: number; lng: number; osm_id: string; road_dist_m: number; road_dist_km: number; route_coords: [number, number][] }[]
@@ -423,6 +437,86 @@ export interface GsStyle {
   workspace: string | null
 }
 
+export interface CoverageSimRequest {
+  bounds: MapBounds
+  frequency_mhz?: number
+  resolution_m?: number
+  tx_power_dbm?: number
+  include_buildings?: boolean
+  model?: string
+  monte_carlo?: boolean
+}
+
+export interface CoverageSimFeature {
+  lat: number
+  lng: number
+  rsrp_dbm: number
+  serving_site_id: string
+}
+
+export interface CoverageSimBuilding {
+  ring: [number, number][]   // [lng, lat] pairs
+  height_m: number
+}
+
+export interface CoverageSimResult {
+  features: CoverageSimFeature[]
+  buildings: CoverageSimBuilding[]
+  engine: string
+  num_sites: number
+  num_buildings: number
+  simulation_time_s: number
+  image_b64?: string
+  sinr_image_b64?: string
+  delay_spread_image_b64?: string
+}
+
+export interface IndoorWallIn {
+  x0: number; y0: number
+  x1: number; y1: number
+  height_m: number
+  material: string
+}
+
+export interface IndoorTxIn {
+  x: number; y: number
+  height_m: number
+  power_dbm: number
+  azimuth_deg: number
+}
+
+export interface IndoorSimRequest {
+  walls: IndoorWallIn[]
+  tx_list: IndoorTxIn[]
+  floor_origin_lat: number
+  floor_origin_lng: number
+  floor_width_m: number
+  floor_height_m: number
+  frequency_mhz?: number
+  resolution_m?: number
+  rx_height_m?: number
+}
+
+export interface IndoorCoveragePoint {
+  x: number; y: number
+  rsrp_dbm: number
+  sinr_db: number
+  serving_tx: number
+}
+
+export interface IndoorSimResult {
+  points: IndoorCoveragePoint[]
+  engine: string
+  nx: number; ny: number
+  floor_width_m: number; floor_height_m: number
+  floor_origin_lat: number; floor_origin_lng: number
+  simulation_time_s: number
+  image_b64?: string
+  sinr_image_b64?: string
+  rsrp_min?: number; rsrp_max?: number
+  sinr_min?: number; sinr_max?: number
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<TokenPair>('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
@@ -515,6 +609,62 @@ export const api = {
 
   gensetBulkSiteIds: (file: File) => uploadFile<string[]>('/siteplanning/genset/bulk-site-ids', file),
 
+  gensetBulkExport: async (
+    file: File,
+    onProgress: (event: {
+      type: 'start' | 'progress' | 'done' | 'error'
+      total?: number
+      i?: number
+      site_id?: string
+      region?: string
+      status?: 'found' | 'missing' | 'no_sources' | 'error'
+      sources?: number
+      ok?: number
+      missing?: number
+      excel_b64?: string
+      detail?: string
+    }) => void,
+  ): Promise<void> => {
+    const form = new FormData()
+    form.append('file', file)
+    const resp = await fetch('/api/siteplanning/genset/bulk-export', {
+      method: 'POST',
+      body: form,
+    })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: resp.statusText }))
+      throw new Error(err.detail ?? resp.statusText)
+    }
+    const reader = resp.body!.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const parts = buf.split('\n\n')
+      buf = parts.pop() ?? ''
+      for (const part of parts) {
+        const line = part.trim()
+        if (!line.startsWith('data: ')) continue
+        try {
+          const evt = JSON.parse(line.slice(6))
+          onProgress(evt)
+          if (evt.type === 'done' && evt.excel_b64) {
+            const bytes = Uint8Array.from(atob(evt.excel_b64), c => c.charCodeAt(0))
+            const blob = new Blob([bytes], {
+              type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            })
+            const a = document.createElement('a')
+            a.href = URL.createObjectURL(blob)
+            a.download = 'genset_bulk_results.xlsx'
+            a.click()
+          }
+        } catch { /* malformed SSE line */ }
+      }
+    }
+  },
+
   nearbyGeoserverFeatures: (layer: string, lat: number, lng: number, radiusM = 2500) =>
     request<NearbyFeature[]>(
       `/analytics/nearby-geoserver-features?${new URLSearchParams({ layer, lat: String(lat), lng: String(lng), radius_m: String(radiusM) })}`,
@@ -528,6 +678,11 @@ export const api = {
     graph_buffer_m?: number
   }) => request<GensetRouteResult>('/siteplanning/genset/route', { method: 'POST', body: JSON.stringify(input) }),
 
+  gensetSingle: (input: { site_lat: number; site_lng: number; max_road_dist_m?: number }) =>
+    request<{ substations: GensetPowerSource[]; electric_poles: GensetPowerSource[]; substations_found: number; poles_found: number; error: string | null; elapsed_s: number }>(
+      '/siteplanning/genset/single', { method: 'POST', body: JSON.stringify(input) },
+    ),
+
   cctvRun: (input: {
     building: object
     parking: object
@@ -535,6 +690,12 @@ export const api = {
     cameras: { camera_type: string; hfov_deg: number; range_m: number; unit_price_rm: number }[]
     offsets: number[]
   }) => request<CctvRunResult>('/siteplanning/cctv/run', { method: 'POST', body: JSON.stringify(input) }),
+
+  simulateCoverage: (req: CoverageSimRequest) =>
+    request<CoverageSimResult>('/coverage/simulate', { method: 'POST', body: JSON.stringify(req) }),
+
+  simulateIndoor: (req: IndoorSimRequest) =>
+    request<IndoorSimResult>('/coverage/simulate-indoor', { method: 'POST', body: JSON.stringify(req) }),
 
   siteForecast: (siteId: string, metric: string, horizonWeeks: number) =>
     request<SiteForecastSeries>(

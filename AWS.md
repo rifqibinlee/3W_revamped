@@ -138,8 +138,8 @@ sudo dnf install -y git
 
 **Option A — Git (recommended)**
 ```bash
-git clone https://github.com/YOUR_ORG/3w-revamped.git
-cd 3w-revamped
+git clone https://github.com/rifqibinlee/3W_revamped.git 
+cd 3w-revamped/
 ```
 
 **Option B — SCP from your laptop**

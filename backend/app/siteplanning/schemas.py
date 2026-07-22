@@ -29,3 +29,9 @@ class GensetRouteRequest(BaseModel):
     substations: list[SubstationIn]
     max_road_dist_m: int = 2000
     graph_buffer_m: int = 2500
+
+
+class GensetSingleRequest(BaseModel):
+    site_lat: float
+    site_lng: float
+    max_road_dist_m: int = 2000

@@ -37,6 +37,8 @@ XTXR_KEYWORDS = ("txrx", "xtxr", "mimo", "antenna")
 BW_KEYWORDS = ("bw", "width", "mhz")
 AREA_TARGET_KEYWORDS = ("urban", "kmc", "target", "outside")
 BAU_NIC_KEYWORDS = ("bau", "nic")
+LAT_KEYWORDS = ("latitude", "lat", "y_coord", "north")
+LON_KEYWORDS = ("longitude", "long", "lng", "x_coord", "east")
 
 REF_SHEET_MARKERS = ("xc ref", "xd ref")
 
@@ -81,11 +83,16 @@ def _select_clause(columns: list[str]) -> str | None:
     area_target_col = _detect_column(columns, AREA_TARGET_KEYWORDS)
     bau_nic_col = _detect_column(columns, BAU_NIC_KEYWORDS)
 
-    band_expr = f'normalize_band_key(CAST("{band_col}" AS VARCHAR))' if band_col else "CAST(NULL AS VARCHAR)"
-    xtxr_expr = f'CAST("{xtxr_col}" AS VARCHAR)' if xtxr_col else "'2T2R'"
-    bw_expr = f'TRY_CAST("{bw_col}" AS DOUBLE)' if bw_col else "0.0"
+    lat_col = _detect_column(columns, LAT_KEYWORDS)
+    lon_col = _detect_column(columns, LON_KEYWORDS)
+
+    band_expr        = f'normalize_band_key(CAST("{band_col}" AS VARCHAR))' if band_col else "CAST(NULL AS VARCHAR)"
+    xtxr_expr        = f'CAST("{xtxr_col}" AS VARCHAR)' if xtxr_col else "'2T2R'"
+    bw_expr          = f'TRY_CAST("{bw_col}" AS DOUBLE)' if bw_col else "0.0"
     area_target_expr = f'CAST("{area_target_col}" AS VARCHAR)' if area_target_col else "CAST(NULL AS VARCHAR)"
-    bau_nic_expr = f'CAST("{bau_nic_col}" AS VARCHAR)' if bau_nic_col else "CAST(NULL AS VARCHAR)"
+    bau_nic_expr     = f'CAST("{bau_nic_col}" AS VARCHAR)' if bau_nic_col else "CAST(NULL AS VARCHAR)"
+    lat_expr         = f'TRY_CAST("{lat_col}" AS DOUBLE)' if lat_col else "CAST(NULL AS DOUBLE)"
+    lon_expr         = f'TRY_CAST("{lon_col}" AS DOUBLE)' if lon_col else "CAST(NULL AS DOUBLE)"
 
     return f"""
         SELECT
@@ -94,7 +101,9 @@ def _select_clause(columns: list[str]) -> str | None:
             COALESCE({xtxr_expr}, '2T2R') AS xtxr,
             COALESCE({bw_expr}, 0.0) * 5.0 AS avail_prb,
             nullif(trim({area_target_expr}), '') AS area_target,
-            nullif(trim({bau_nic_expr}), '') AS bau_nic
+            nullif(trim({bau_nic_expr}), '') AS bau_nic,
+            {lat_expr} AS latitude,
+            {lon_expr} AS longitude
         FROM read_file
     """
 
@@ -178,6 +187,8 @@ def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> str:
                 avail_prb,
                 area_target,
                 bau_nic,
+                latitude,
+                longitude,
                 CASE
                     WHEN cell_name LIKE '%\\_%' ESCAPE '\\' THEN split_part(cell_name, '_', 1)
                     WHEN cell_name LIKE '%-%' THEN split_part(cell_name, '-', 1)
@@ -204,7 +215,9 @@ def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> str:
             xtxr,
             avail_prb,
             area_target,
-            bau_nic
+            bau_nic,
+            latitude,
+            longitude
         FROM base
     """)
 
@@ -223,7 +236,9 @@ def _run(con, raw_file_paths: list[str], temp_parquets: list[str]) -> str:
                 xtxr,
                 avail_prb,
                 area_target,
-                bau_nic
+                bau_nic,
+                latitude,
+                longitude
             FROM parsed
         ) TO '{output_path}' (FORMAT PARQUET, COMPRESSION SNAPPY)
     """)

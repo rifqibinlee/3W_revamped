@@ -3,6 +3,7 @@ import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { GlassPanel } from '../components/GlassPanel'
+import IndoorSimulator from '../components/IndoorSimulator'
 import {
   api,
   ApiError,
@@ -11,6 +12,7 @@ import {
   type CoverageHolePoint,
   type CurrentStatusRow,
   type ForecastRow,
+  type GensetPowerSource,
   type GensetRouteResult,
   type GeoserverLayer,
   type MapBounds,
@@ -116,7 +118,7 @@ function fmtDistance(meters: number): string {
 
 const TECH_COLORS: Record<string, string> = { '5G': '#eab308', '4G': '#3b82f6', '3G': '#f97316', '2G': '#6b7280' }
 
-// A 65° sector wedge centered on the cell's azimuth — the antenna's
+// A 65Â° sector wedge centered on the cell's azimuth — the antenna's
 // real horizontal beamwidth varies by hardware and isn't in
 // site_coverage_params, so this is a representative approximation
 // (a common macro-sector beamwidth) rather than an exact pattern,
@@ -256,7 +258,7 @@ function MapStatsPanel({ title, stats, compact = false }: { title: string; stats
                 <p className="text-[10px] uppercase tracking-wider text-white/45">Worst coverage hole</p>
                 <p className="text-sm font-semibold">
                   {stats.worst_coverage_hole
-                    ? `#${stats.worst_coverage_hole.cluster_id} (${stats.worst_coverage_hole.data_source}) · ${stats.worst_coverage_hole.point_count} pts`
+                    ? `#${stats.worst_coverage_hole.cluster_id} (${stats.worst_coverage_hole.data_source}) Â· ${stats.worst_coverage_hole.point_count} pts`
                     : '—'}
                 </p>
               </div>
@@ -361,7 +363,7 @@ export function MapPage() {
   const [fixedLayers, setFixedLayers] = useState<{ substations_layer: string; buildings_layer: string } | null>(null)
 
   // Unified tool drawer — right-side panel on desktop, bottom sheet on mobile
-  const [toolDrawer, setToolDrawer] = useState<'none' | 'genset' | 'cctv' | 'bitcoin'>('none')
+  const [toolDrawer, setToolDrawer] = useState<'none' | 'genset' | 'cctv' | 'bitcoin' | 'coverage' | 'indoor'>('none')
   const [gensetTab, setGensetTab] = useState<'single' | 'bulk'>('single')
 
   const [gensetSiteId, setGensetSiteId] = useState('')
@@ -369,8 +371,13 @@ export function MapPage() {
   const [gensetPickedLatLng, setGensetPickedLatLng] = useState<[number, number] | null>(null)
   const [gensetBulkFile, setGensetBulkFile] = useState<File | null>(null)
   const [gensetStatus, setGensetStatus] = useState<string | null>(null)
+  const [gensetLoading, setGensetLoading] = useState(false)
   const [gensetResult, setGensetResult] = useState<GensetRouteResult | null>(null)
+  const [gensetSingleSources, setGensetSingleSources] = useState<{ substations: GensetPowerSource[]; electric_poles: GensetPowerSource[]; substations_found: number; poles_found: number; error: string | null; elapsed_s: number } | null>(null)
+  const [gensetSiteLoc, setGensetSiteLoc] = useState<[number, number] | null>(null)
   const [gensetBulkResults, setGensetBulkResults] = useState<{ siteId: string; result: GensetRouteResult | null; error: string | null }[]>([])
+  const [gensetBulkProgress, setGensetBulkProgress] = useState<{ siteId: string; region: string; status: string; sources: number }[]>([])
+  const [gensetBulkTotal, setGensetBulkTotal] = useState(0)
 
   const [cctvBuildingFile, setCctvBuildingFile] = useState<File | null>(null)
   const [cctvParkingFile, setCctvParkingFile] = useState<File | null>(null)
@@ -390,6 +397,342 @@ export function MapPage() {
   const [btcSearch, setBtcSearch] = useState('')
   const [btcStatus, setBtcStatus] = useState<string | null>(null)
   const [btcResult, setBtcResult] = useState<{ buildingCount: number; radiusKm: number; substations: { name: string; distM: number }[] } | null>(null)
+
+  // Coverage simulation
+  const [coverageFreq, setCoverageFreq] = useState(1800)
+  const [coverageRes, setCoverageRes] = useState(50)
+  const [coverageTxPower, setCoverageTxPower] = useState(43)
+  const [coverageIncludeBuildings, setCoverageIncludeBuildings] = useState(false)
+  const [coverageModel, setCoverageModel] = useState('hata')
+  const [coverageMonteCarlo, setCoverageMonteCarlo] = useState(false)
+
+  // ── Indoor simulation state ──────────────────────────────────────────────
+  type IndoorWallDraw = { x0: number; y0: number; x1: number; y1: number; height_m: number; material: string }
+  type IndoorTxDraw   = { x: number; y: number; height_m: number; power_dbm: number; label: string }
+  const [indoorWalls, setIndoorWalls]         = useState<IndoorWallDraw[]>([])
+  const [indoorTxList, setIndoorTxList]       = useState<IndoorTxDraw[]>([])
+  const [indoorFloorW, setIndoorFloorW]       = useState(30)
+  const [indoorFloorH, setIndoorFloorH]       = useState(20)
+  const [indoorFloorOrigin, setIndoorFloorOrigin] = useState<{ lat: number; lng: number } | null>(null)
+  const [indoorFreq, setIndoorFreq]           = useState(2400)
+  const [indoorRes, setIndoorRes]             = useState(0.5)
+  const [indoorMaterial, setIndoorMaterial]   = useState('concrete')
+  const [indoorLoading, setIndoorLoading]     = useState(false)
+  const [indoorResult, setIndoorResult]       = useState<import('../lib/api').IndoorSimResult | null>(null)
+  const [indoorStep, setIndoorStep]           = useState<'origin' | 'walls' | 'tx' | 'done'>('origin')
+  const [coverageLoading, setCoverageLoading] = useState(false)
+  const [coverageStatus, setCoverageStatus] = useState<string | null>(null)
+  const [coverageEngine, setCoverageEngine] = useState<string | null>(null)
+  const [coverageViewMode, setCoverageViewMode] = useState<'rsrp' | 'sinr' | 'delay_spread' | 'site'>('rsrp')
+  const [coverageSiteColors, setCoverageSiteColors] = useState<Map<string, string>>(new Map())
+  // Cached images and GeoJSON so mode-toggle doesn't re-run the simulation
+  const coverageImagesRef = useRef<{ rsrp?: string; sinr?: string; delay_spread?: string; bounds: MapBounds } | null>(null)
+  const coverageGeojsonRef = useRef<FeatureCollection | null>(null)
+
+  function goldenAngleColor(i: number): string {
+    const h = (i * 137.508) % 360
+    const s = 0.72, l = 0.55
+    const a = s * Math.min(l, 1 - l)
+    const f = (n: number) => {
+      const k = (n + h / 30) % 12
+      return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))))
+    }
+    return `#${[f(0), f(8), f(4)].map((v) => v.toString(16).padStart(2, '0')).join('')}`
+  }
+
+  async function runCoverage() {
+    const map = mapRef.current
+    if (!map) return
+    const bounds = readBounds(map)
+    setCoverageLoading(true)
+    setCoverageStatus('Running simulation…')
+    setCoverageEngine(null)
+    try {
+      const result = await api.simulateCoverage({
+        bounds,
+        frequency_mhz: coverageFreq,
+        resolution_m: coverageRes,
+        tx_power_dbm: coverageTxPower,
+        include_buildings: coverageIncludeBuildings,
+        model: coverageModel,
+        monte_carlo: coverageMonteCarlo,
+      })
+      setCoverageEngine(result.engine)
+      const bldPart = result.num_buildings > 0 ? ` Â· ${result.num_buildings} buildings` : ''
+      setCoverageStatus(
+        `${result.features.length} cells Â· ${result.num_sites} sites${bldPart} Â· ${result.simulation_time_s}s Â· engine: ${result.engine}`,
+      )
+
+      // Build extruded polygon GeoJSON — each grid cell is a square polygon
+      // whose height encodes RSRP (taller = stronger signal).
+      // RSRP range: -140 dBm (edge) â†’ -80 dBm (excellent).
+      const RSRP_MIN = -140
+      const RSRP_MAX = -80
+      // Adaptive height: ~10 % of viewport height so columns scale with zoom
+      const viewportHeightM = (bounds.north - bounds.south) * 111_320
+      const MAX_HEIGHT = Math.round(Math.max(50, Math.min(500, viewportHeightM * 0.1)))
+
+      // Half-side of each grid cell in degrees (approx, at viewport centre lat)
+      const centerLat = (bounds.south + bounds.north) / 2
+      const halfLatDeg = (coverageRes / 2) / 111_320
+      const halfLngDeg = (coverageRes / 2) / (111_320 * Math.cos(centerLat * Math.PI / 180))
+
+      // Assign each unique site a distinct colour for per-site view
+      const uniqueSites = [...new Set(result.features.map((f) => f.serving_site_id))]
+      const siteColorMap = new Map(uniqueSites.map((id, i) => [id, goldenAngleColor(i)]))
+      setCoverageSiteColors(siteColorMap)
+
+      const geojson: FeatureCollection = {
+        type: 'FeatureCollection',
+        features: result.features.map((f) => {
+          const t = Math.max(0, Math.min(1, (f.rsrp_dbm - RSRP_MIN) / (RSRP_MAX - RSRP_MIN)))
+          const height = Math.round(t * MAX_HEIGHT)
+          return {
+            type: 'Feature',
+            geometry: {
+              type: 'Polygon',
+              coordinates: [[
+                [f.lng - halfLngDeg, f.lat - halfLatDeg],
+                [f.lng + halfLngDeg, f.lat - halfLatDeg],
+                [f.lng + halfLngDeg, f.lat + halfLatDeg],
+                [f.lng - halfLngDeg, f.lat + halfLatDeg],
+                [f.lng - halfLngDeg, f.lat - halfLatDeg],
+              ]],
+            },
+            properties: { rsrp: f.rsrp_dbm, height, site: f.serving_site_id, siteColor: siteColorMap.get(f.serving_site_id) ?? '#888888' },
+          }
+        }),
+      }
+
+      // Store data for mode-toggling without re-simulation
+      coverageGeojsonRef.current = geojson
+      coverageImagesRef.current = {
+        rsrp:          result.image_b64,
+        sinr:          result.sinr_image_b64,
+        delay_spread:  result.delay_spread_image_b64,
+        bounds,
+      }
+
+      // OSM buildings GeoJSON (used in both modes)
+      const bldGeojson: FeatureCollection = {
+        type: 'FeatureCollection',
+        features: result.buildings.map((b) => ({
+          type: 'Feature',
+          geometry: { type: 'Polygon', coordinates: [b.ring.map(([lng, lat]) => [lng, lat])] },
+          properties: { height: b.height_m },
+        })),
+      }
+
+      const removeCoverageLayers = (m: maplibregl.Map) => {
+        if (m.getLayer('coverage-heatmap-layer')) m.removeLayer('coverage-heatmap-layer')
+        if (m.getSource('coverage-heatmap-source')) m.removeSource('coverage-heatmap-source')
+        if (m.getLayer('coverage-sim-layer')) m.removeLayer('coverage-sim-layer')
+        if (m.getSource('coverage-sim-source')) m.removeSource('coverage-sim-source')
+        if (m.getLayer('coverage-buildings-layer')) m.removeLayer('coverage-buildings-layer')
+        if (m.getSource('coverage-buildings-source')) m.removeSource('coverage-buildings-source')
+      }
+
+      const addBuildingLayer = (m: maplibregl.Map, belowLayer?: string) => {
+        if (result.buildings.length === 0) return
+        if (m.getSource('coverage-buildings-source')) {
+          (m.getSource('coverage-buildings-source') as maplibregl.GeoJSONSource).setData(bldGeojson)
+          return
+        }
+        m.addSource('coverage-buildings-source', { type: 'geojson', data: bldGeojson })
+        m.addLayer({
+          id: 'coverage-buildings-layer',
+          type: 'fill-extrusion',
+          source: 'coverage-buildings-source',
+          paint: {
+            'fill-extrusion-height': ['get', 'height'],
+            'fill-extrusion-base': 0,
+            'fill-extrusion-color': '#94a3b8',
+            'fill-extrusion-opacity': 0.75,
+          },
+        }, belowLayer)
+      }
+
+      const bringMarkersToFront = (m: maplibregl.Map) => {
+        for (const id of ['current-status-cluster-glow', 'current-status-cluster-circle', 'current-status-cluster-count', 'current-status-point']) {
+          if (m.getLayer(id)) m.moveLayer(id)
+        }
+      }
+
+      const applyImageLayer = (m: maplibregl.Map, imageB64: string | undefined) => {
+        removeCoverageLayers(m)
+        if (!imageB64) return
+        const b = bounds
+        m.addSource('coverage-heatmap-source', {
+          type: 'image',
+          url: `data:image/png;base64,${imageB64}`,
+          coordinates: [[b.west, b.north], [b.east, b.north], [b.east, b.south], [b.west, b.south]],
+        })
+        m.addLayer({ id: 'coverage-heatmap-layer', type: 'raster', source: 'coverage-heatmap-source', paint: { 'raster-opacity': 0.82 } })
+        addBuildingLayer(m)
+        bringMarkersToFront(m)
+        m.easeTo({ pitch: 0, bearing: 0, duration: 600 })
+      }
+
+      const applyPerSite = (m: maplibregl.Map) => {
+        removeCoverageLayers(m)
+        m.addSource('coverage-sim-source', { type: 'geojson', data: geojson })
+        m.addLayer({
+          id: 'coverage-sim-layer',
+          type: 'fill-extrusion',
+          source: 'coverage-sim-source',
+          paint: {
+            'fill-extrusion-height': ['get', 'height'],
+            'fill-extrusion-base': 0,
+            'fill-extrusion-opacity': 0.85,
+            'fill-extrusion-color': ['get', 'siteColor'] as maplibregl.ExpressionSpecification,
+          },
+        })
+        addBuildingLayer(m, 'coverage-sim-layer')
+        bringMarkersToFront(m)
+        m.easeTo({ pitch: 50, bearing: -15, duration: 800 })
+      }
+
+      const apply = () => {
+        if (!map.isStyleLoaded()) return
+        if (coverageViewMode === 'site') applyPerSite(map)
+        else applyImageLayer(map, {
+          rsrp: result.image_b64,
+          sinr: result.sinr_image_b64,
+          delay_spread: result.delay_spread_image_b64,
+        }[coverageViewMode])
+      }
+
+      if (map.isStyleLoaded()) apply()
+      else map.once('load', apply)
+    } catch (e) {
+      setCoverageStatus(e instanceof Error ? e.message : 'Simulation failed')
+    } finally {
+      setCoverageLoading(false)
+    }
+  }
+
+  // ── Indoor simulation runner ─────────────────────────────────────────────
+  async function runIndoor() {
+    const map = mapRef.current
+    if (!map || !indoorFloorOrigin || indoorTxList.length === 0) return
+    setIndoorLoading(true)
+    setIndoorResult(null)
+    try {
+      const result = await api.simulateIndoor({
+        walls: indoorWalls.map(w => ({ ...w })),
+        tx_list: indoorTxList.map(t => ({ x: t.x, y: t.y, height_m: t.height_m, power_dbm: t.power_dbm, azimuth_deg: 0 })),
+        floor_origin_lat: indoorFloorOrigin.lat,
+        floor_origin_lng: indoorFloorOrigin.lng,
+        floor_width_m: indoorFloorW,
+        floor_height_m: indoorFloorH,
+        frequency_mhz: indoorFreq,
+        resolution_m: indoorRes,
+        rx_height_m: 1.0,
+      })
+      setIndoorResult(result)
+      setIndoorStep('done')
+
+      // Overlay the heatmap image on the map
+      if (result.image_b64) {
+        const { lat, lng } = indoorFloorOrigin
+        // Convert metres to degrees (approximate)
+        const mLat = 1 / 111320
+        const mLng = 1 / (111320 * Math.cos(lat * Math.PI / 180))
+        const sw: [number, number] = [lng, lat]
+        const ne: [number, number] = [lng + indoorFloorW * mLng, lat + indoorFloorH * mLat]
+        const bounds: [number, number, number, number] = [sw[0], sw[1], ne[0], ne[1]]
+
+        if (map.getLayer('indoor-heatmap-layer')) map.removeLayer('indoor-heatmap-layer')
+        if (map.getSource('indoor-heatmap-source')) map.removeSource('indoor-heatmap-source')
+
+        map.addSource('indoor-heatmap-source', {
+          type: 'image',
+          url: `data:image/png;base64,${result.image_b64}`,
+          coordinates: [sw, [ne[0], sw[1]], ne, [sw[0], ne[1]]],
+        })
+        map.addLayer({
+          id: 'indoor-heatmap-layer',
+          type: 'raster',
+          source: 'indoor-heatmap-source',
+          paint: { 'raster-opacity': 0.8 },
+        })
+
+        map.fitBounds([[sw[0] - 0.001, sw[1] - 0.001], [ne[0] + 0.001, ne[1] + 0.001]], { padding: 40 })
+      }
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Indoor simulation failed')
+    } finally {
+      setIndoorLoading(false)
+    }
+  }
+
+  // Swap layers instantly when the view-mode toggle changes (no re-simulation)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !map.isStyleLoaded()) return
+    if (!map.getLayer('coverage-heatmap-layer') && !map.getLayer('coverage-sim-layer')) return
+
+    const removeAll = () => {
+      if (map.getLayer('coverage-heatmap-layer')) map.removeLayer('coverage-heatmap-layer')
+      if (map.getSource('coverage-heatmap-source')) map.removeSource('coverage-heatmap-source')
+      if (map.getLayer('coverage-sim-layer')) map.removeLayer('coverage-sim-layer')
+      if (map.getSource('coverage-sim-source')) map.removeSource('coverage-sim-source')
+    }
+    const bringMarkersToFront = () => {
+      for (const id of ['current-status-cluster-glow', 'current-status-cluster-circle', 'current-status-cluster-count', 'current-status-point']) {
+        if (map.getLayer(id)) map.moveLayer(id)
+      }
+    }
+
+    if (coverageViewMode === 'site') {
+      const geojson = coverageGeojsonRef.current
+      if (!geojson) return
+      removeAll()
+      map.addSource('coverage-sim-source', { type: 'geojson', data: geojson })
+      map.addLayer({
+        id: 'coverage-sim-layer', type: 'fill-extrusion', source: 'coverage-sim-source',
+        paint: {
+          'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-base': 0,
+          'fill-extrusion-opacity': 0.85,
+          'fill-extrusion-color': ['get', 'siteColor'] as maplibregl.ExpressionSpecification,
+        },
+      })
+      bringMarkersToFront()
+      map.easeTo({ pitch: 50, bearing: -15, duration: 600 })
+    } else {
+      const cached = coverageImagesRef.current
+      if (!cached) return
+      const imageB64 = cached[coverageViewMode]
+      if (!imageB64) return
+      removeAll()
+      const b = cached.bounds
+      map.addSource('coverage-heatmap-source', {
+        type: 'image',
+        url: `data:image/png;base64,${imageB64}`,
+        coordinates: [[b.west, b.north], [b.east, b.north], [b.east, b.south], [b.west, b.south]],
+      })
+      map.addLayer({ id: 'coverage-heatmap-layer', type: 'raster', source: 'coverage-heatmap-source', paint: { 'raster-opacity': 0.82 } })
+      bringMarkersToFront()
+      map.easeTo({ pitch: 0, bearing: 0, duration: 600 })
+    }
+  }, [coverageViewMode])
+
+  function clearCoverage() {
+    const map = mapRef.current
+    if (!map || !map.isStyleLoaded()) return
+    if (map.getLayer('coverage-heatmap-layer')) map.removeLayer('coverage-heatmap-layer')
+    if (map.getSource('coverage-heatmap-source')) map.removeSource('coverage-heatmap-source')
+    if (map.getLayer('coverage-sim-layer')) map.removeLayer('coverage-sim-layer')
+    if (map.getSource('coverage-sim-source')) map.removeSource('coverage-sim-source')
+    if (map.getLayer('coverage-buildings-layer')) map.removeLayer('coverage-buildings-layer')
+    if (map.getSource('coverage-buildings-source')) map.removeSource('coverage-buildings-source')
+    coverageImagesRef.current = null
+    coverageGeojsonRef.current = null
+    map.easeTo({ pitch: 0, bearing: 0, duration: 600 })
+    setCoverageStatus(null)
+    setCoverageEngine(null)
+    setCoverageSiteColors(new Map())
+  }
 
   function toggleLayer(key: keyof typeof layerToggles) {
     setLayerToggles((prev) => ({ ...prev, [key]: !prev[key] }))
@@ -433,9 +776,11 @@ export function MapPage() {
       style: getBaseStyle(),
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
+      attributionControl: false,
     })
     mapRef.current = map
-    map.addControl(new maplibregl.NavigationControl(), 'top-right')
+    map.addControl(new maplibregl.NavigationControl(), 'bottom-right')
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right')
 
     map.on('load', () => {
       api.currentStatus(mapFilterYear ?? undefined, mapFilterWeek ?? undefined).then((rows) => {
@@ -463,7 +808,7 @@ export function MapPage() {
         type: 'raster',
         tiles: ['https://a.basemaps.cartocdn.com/rastertiles/light_only_labels/{z}/{x}/{y}@2x.png'],
         tileSize: 256,
-        attribution: '© OpenStreetMap contributors © CARTO',
+        attribution: 'Â© OpenStreetMap contributors Â© CARTO',
       })
       map.addLayer({ id: 'satellite-labels-layer', type: 'raster', source: 'satellite-labels', layout: { visibility: 'none' } })
 
@@ -513,6 +858,7 @@ export function MapPage() {
       style: getBaseStyle(),
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
+      attributionControl: false,
     })
 
     const left = makeMap(splitLeftRef.current)
@@ -524,7 +870,10 @@ export function MapPage() {
     splitRightMapRef.current = right
 
     const allMaps = [left, middle, right].filter((m): m is maplibregl.Map => m !== null)
-    allMaps.forEach((m) => m.addControl(new maplibregl.NavigationControl(), 'top-right'))
+    allMaps.forEach((m) => {
+      m.addControl(new maplibregl.NavigationControl(), 'bottom-right')
+      m.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right')
+    })
 
     let syncing = false
     const syncFrom = (source: maplibregl.Map) => () => {
@@ -660,6 +1009,29 @@ export function MapPage() {
     }
   }, [measureActive])
 
+  // Indoor simulation: map clicks set origin (step 1) or place TXs (step 3)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || toolDrawer !== 'indoor') return
+    function handleClick(e: maplibregl.MapMouseEvent) {
+      const { lat, lng } = e.lngLat
+      if (indoorStep === 'origin') {
+        setIndoorFloorOrigin({ lat, lng })
+      } else if (indoorStep === 'tx' && indoorFloorOrigin) {
+        // Convert click lat/lng to local XY metres from SW origin
+        const mLat = 111320
+        const mLng = 111320 * Math.cos(indoorFloorOrigin.lat * Math.PI / 180)
+        const x = (lng - indoorFloorOrigin.lng) * mLng
+        const y = (lat - indoorFloorOrigin.lat) * mLat
+        if (x >= 0 && y >= 0 && x <= indoorFloorW && y <= indoorFloorH) {
+          setIndoorTxList(prev => [...prev, { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10, height_m: 2.5, power_dbm: 20, label: `AP${prev.length + 1}` }])
+        }
+      }
+    }
+    map.on('click', handleClick)
+    return () => { map.off('click', handleClick) }
+  }, [toolDrawer, indoorStep, indoorFloorOrigin, indoorFloorW, indoorFloorH])
+
   // Render the measurement line + per-segment distance/bearing labels
   useEffect(() => {
     const map = mapRef.current
@@ -683,7 +1055,7 @@ export function MapPage() {
         const mid: [number, number] = [(prev[0] + p[0]) / 2, (prev[1] + p[1]) / 2]
         const dist = haversineDistanceMeters(prev, p)
         const bearing = bearingDegrees(prev, p)
-        return { type: 'Feature', geometry: { type: 'Point', coordinates: mid }, properties: { label: `${fmtDistance(dist)} · ${bearing.toFixed(0)}°` } }
+        return { type: 'Feature', geometry: { type: 'Point', coordinates: mid }, properties: { label: `${fmtDistance(dist)} Â· ${bearing.toFixed(0)}Â°` } }
       }),
     }
 
@@ -1070,18 +1442,23 @@ export function MapPage() {
         latitude = detail.site.latitude
         longitude = detail.site.longitude
       }
-      setGensetStatus('Querying nearby substations…')
-      const features = await api.nearbyGeoserverFeatures(fixedLayers.substations_layer, latitude, longitude, 2500)
-      const substations = features.map((f, i) => ({ osm_id: String(f.properties.osm_id ?? i), name: f.name, lat: f.lat, lng: f.lng }))
-
-      if (substations.length === 0) {
-        setGensetStatus(`No substations found within 2.5km on layer "${fixedLayers.substations_layer}"`)
+      setGensetStatus('Querying Overpass for substations + local electric poles…')
+      setGensetSingleSources(null)
+      setGensetSiteLoc([latitude, longitude])
+      const sources = await api.gensetSingle({ site_lat: latitude, site_lng: longitude })
+      if (sources.error) {
+        setGensetStatus(`Error: ${sources.error}`)
         return
       }
-      setGensetStatus('Routing to nearest substations…')
-      const result = await api.gensetRoute({ site_lat: latitude, site_lng: longitude, substations })
-      setGensetResult(result)
-      setGensetStatus(result.error ?? `${result.substations_within_2km} substation(s) reachable within 2km of road network`)
+      const total = sources.substations_found + sources.poles_found
+      if (total === 0) {
+        setGensetStatus('No substations or electric poles found within 2 km')
+        return
+      }
+      setGensetSingleSources(sources)
+      setGensetStatus(
+        `${sources.substations_found} substation(s) Â· ${sources.poles_found} electric pole(s) within 2 km Â· ${sources.elapsed_s}s`
+      )
     } catch (e) {
       setGensetStatus(e instanceof Error ? e.message : 'Genset lookup failed')
     }
@@ -1337,7 +1714,7 @@ export function MapPage() {
     if (map.isStyleLoaded()) apply(); else map.once('load', apply)
   }, [btcSites])
 
-  // Illegal power-draw check: centroid + max-dist buffer → query GeoServer layers
+  // Illegal power-draw check: centroid + max-dist buffer â†’ query GeoServer layers
   async function runBtcAnalysis() {
     if (btcSites.length < btcMode) {
       setBtcStatus(`Select ${btcMode} sites first`)
@@ -1387,32 +1764,60 @@ export function MapPage() {
     }
   }
 
-  // Render genset route lines — single result, or all routes from a
-  // bulk run combined.
+  // Render genset route lines on the map.
+  // Single-site (/genset/single): straight lines site â†’ each power source,
+  //   substations in amber, electric poles in sky-blue.
+  // Legacy bulk: road-routed polylines from route_coords.
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
-    const allResults = gensetResult ? [gensetResult] : gensetBulkResults.map((r) => r.result).filter((r): r is GensetRouteResult => r !== null)
-    if (allResults.length === 0) return
-    const data: FeatureCollection = {
-      type: 'FeatureCollection',
-      features: allResults.flatMap((res) =>
-        res.results.map((r) => ({ type: 'Feature' as const, geometry: { type: 'LineString' as const, coordinates: r.route_coords }, properties: { name: r.name } })),
-      ),
+
+    const features: GeoJSON.Feature[] = []
+
+    if (gensetSingleSources && gensetSiteLoc) {
+      const [sLat, sLon] = gensetSiteLoc
+      for (const src of [...gensetSingleSources.substations, ...gensetSingleSources.electric_poles]) {
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: [[sLon, sLat], [src.lon, src.lat]] },
+          properties: { name: src.name, type: src.power_source_type },
+        })
+      }
+    } else {
+      const allResults = gensetResult
+        ? [gensetResult]
+        : gensetBulkResults.map((r) => r.result).filter((r): r is GensetRouteResult => r !== null)
+      for (const res of allResults) {
+        for (const r of res.results) {
+          features.push({
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: r.route_coords },
+            properties: { name: r.name, type: 'Substation' },
+          })
+        }
+      }
     }
+
+    if (features.length === 0) return
+
+    const data: FeatureCollection = { type: 'FeatureCollection', features }
     const apply = () => {
       const existing = map.getSource('genset-routes') as maplibregl.GeoJSONSource | undefined
-      if (existing) {
-        existing.setData(data)
-        return
-      }
+      if (existing) { existing.setData(data); return }
       if (!map.isStyleLoaded()) return
       map.addSource('genset-routes', { type: 'geojson', data })
-      map.addLayer({ id: 'genset-routes-line', type: 'line', source: 'genset-routes', paint: { 'line-color': '#f97316', 'line-width': 3 } })
+      map.addLayer({
+        id: 'genset-routes-line', type: 'line', source: 'genset-routes',
+        paint: {
+          'line-color': ['match', ['get', 'type'], 'Substation', '#f97316', '#38bdf8'],
+          'line-width': 2.5,
+          'line-dasharray': ['match', ['get', 'type'], 'Electric Pole', ['literal', [4, 2]], ['literal', [1]]],
+        },
+      })
     }
     if (map.isStyleLoaded()) apply()
     else map.once('load', apply)
-  }, [gensetResult, gensetBulkResults])
+  }, [gensetResult, gensetBulkResults, gensetSingleSources, gensetSiteLoc])
 
   // Plot CCTV pipeline layers on map and zoom to AOI when result arrives
   useEffect(() => {
@@ -1452,9 +1857,10 @@ export function MapPage() {
   }, [cctvResult])
 
   return (
-    <div className="flex items-stretch gap-4">
+    <div className="flex flex-col items-stretch gap-4 md:flex-row">
     <div className="min-w-0 flex-1 space-y-4">
-      <GlassPanel className="relative z-30 flex flex-wrap items-center gap-3">
+      <GlassPanel className="relative z-30 overflow-x-auto">
+      <div className="flex min-w-max items-center gap-2">
         {/* View mode icons: single / two-pane / three-pane */}
         <div className="flex items-center gap-1 rounded-xl border border-white/15 p-1">
           {([
@@ -1541,14 +1947,18 @@ export function MapPage() {
 
         {!splitActive && (
           <>
+            {/* Divider */}
+            <div className="h-6 w-px shrink-0 bg-white/10" />
+            {/* Tool group */}
+            <div className="flex items-center gap-1 rounded-xl border border-white/15 p-1">
             <div className="relative z-30">
               <button
                 onClick={() => {
                   setDrawMenuOpen((v) => !v)
                 }}
                 title="Draw an annotation"
-                className={`flex h-9 w-9 items-center justify-center rounded-xl ${
-                  tool !== 'none' ? 'bg-sky-400 text-ink-900' : 'border border-white/20 text-white/80'
+                className={`flex h-8 w-8 items-center justify-center rounded-lg ${
+                  tool !== 'none' ? 'bg-sky-400 text-ink-900' : 'text-white/60 hover:text-white'
                 }`}
               >
                 <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1588,7 +1998,6 @@ export function MapPage() {
               </button>
             )}
 
-            <div>
               <button
                 onClick={() => {
                   if (!measureActive) {
@@ -1599,8 +2008,8 @@ export function MapPage() {
                   setMeasurePoints([])
                 }}
                 title="Measure distance and bearing"
-                className={`flex h-9 w-9 items-center justify-center rounded-xl ${
-                  measureActive ? 'bg-sky-400 text-ink-900' : 'border border-white/20 text-white/80'
+                className={`flex h-8 w-8 items-center justify-center rounded-lg ${
+                  measureActive ? 'bg-sky-400 text-ink-900' : 'text-white/60 hover:text-white'
                 }`}
               >
                 <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1608,12 +2017,11 @@ export function MapPage() {
                   <path d="M17 3l4 4-14 14-4-4z" />
                 </svg>
               </button>
-            </div>
 
             <button
               onClick={() => setToolDrawer((v) => (v === 'genset' ? 'none' : 'genset'))}
               title="Genset/substation routing"
-              className={`flex h-9 w-9 items-center justify-center rounded-xl border text-white/80 ${toolDrawer === 'genset' ? 'border-amber-400/60 bg-amber-400/10' : 'border-white/20'}`}
+              className={`flex h-8 w-8 items-center justify-center rounded-lg text-white/60 hover:text-white ${toolDrawer === 'genset' ? 'bg-amber-400/15 text-amber-300' : ''}`}
             >
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M13 2 3 14h7l-1 8 11-12h-7l1-8z" />
@@ -1623,7 +2031,7 @@ export function MapPage() {
             <button
               onClick={() => setToolDrawer((v) => (v === 'cctv' ? 'none' : 'cctv'))}
               title="CCTV camera planning"
-              className={`flex h-9 w-9 items-center justify-center rounded-xl border text-white/80 ${toolDrawer === 'cctv' ? 'border-emerald-400/60 bg-emerald-400/10' : 'border-white/20'}`}
+              className={`flex h-8 w-8 items-center justify-center rounded-lg text-white/60 hover:text-white ${toolDrawer === 'cctv' ? 'bg-emerald-400/15 text-emerald-300' : ''}`}
             >
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="7" width="13" height="10" rx="2" />
@@ -1634,13 +2042,36 @@ export function MapPage() {
             <button
               onClick={() => setToolDrawer((v) => (v === 'bitcoin' ? 'none' : 'bitcoin'))}
               title="Unauthorized power-draw check"
-              className={`flex h-9 w-9 items-center justify-center rounded-xl border text-white/80 ${toolDrawer === 'bitcoin' ? 'border-sky-400/60 bg-sky-400/10' : 'border-white/20'}`}
+              className={`flex h-8 w-8 items-center justify-center rounded-lg text-white/60 hover:text-white ${toolDrawer === 'bitcoin' ? 'bg-sky-400/15 text-sky-300' : ''}`}
             >
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="9" />
                 <path d="M9.5 9h2l-1 3h2l-2.5 4M14.5 9h-1" />
               </svg>
             </button>
+
+            <button
+              onClick={() => setToolDrawer((v) => (v === 'coverage' ? 'none' : 'coverage'))}
+              title="RF coverage simulation"
+              className={`flex h-8 w-8 items-center justify-center rounded-lg text-white/60 hover:text-white ${toolDrawer === 'coverage' ? 'bg-violet-400/15 text-violet-300' : ''}`}
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5.636 5.636a9 9 0 1 0 12.728 0M12 3v9" />
+                <circle cx="12" cy="12" r="1" fill="currentColor" />
+              </svg>
+            </button>
+
+            <button
+              onClick={() => setToolDrawer((v) => (v === 'indoor' ? 'none' : 'indoor'))}
+              title="Indoor coverage simulation (Sionna RT)"
+              className={`flex h-8 w-8 items-center justify-center rounded-lg text-white/60 hover:text-white ${toolDrawer === 'indoor' ? 'bg-violet-400/15 text-violet-300' : ''}`}
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 10.5L12 3l9 7.5V21H3V10.5z" />
+                <path d="M9 21V12h6v9" />
+              </svg>
+            </button>
+            </div>{/* end tool group */}
             {(tool === 'line' || tool === 'polygon') && (
               <button
                 onClick={finishDraft}
@@ -1675,6 +2106,7 @@ export function MapPage() {
         )}
 
         {status && <p className="text-sm text-white/70">{status}</p>}
+      </div>
       </GlassPanel>
 
       <div className={`grid gap-4 ${splitActive ? '' : 'lg:grid-cols-[1fr_280px]'}`}>
@@ -2075,15 +2507,17 @@ export function MapPage() {
 
     </div>{/* end inner content column */}
 
-    {/* ── Tool panel — in-flow right column, no overlap ── */}
+    {/* ── Tool panel — right column on desktop, fixed bottom sheet on mobile ── */}
     {toolDrawer !== 'none' && (
-      <GlassPanel className="flex w-80 shrink-0 flex-col overflow-hidden !p-0">
+      <div className="fixed bottom-0 left-0 right-0 z-50 md:relative md:bottom-auto md:left-auto md:right-auto md:z-auto md:w-80 md:shrink-0">
+      <GlassPanel className="flex max-h-[70vh] flex-col overflow-hidden !rounded-b-none !p-0 md:max-h-none md:!rounded-3xl">
           {/* Panel header */}
           <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3">
             <p className="font-display text-sm font-semibold">
               {toolDrawer === 'genset' && 'Genset / Substation routing'}
               {toolDrawer === 'cctv' && 'CCTV camera planning'}
               {toolDrawer === 'bitcoin' && 'Unauthorized power-draw check'}
+              {toolDrawer === 'coverage' && 'RF Coverage Simulation'}
             </p>
             <button
               onClick={() => setToolDrawer('none')}
@@ -2177,62 +2611,97 @@ export function MapPage() {
                       Find route
                     </button>
                     {gensetStatus && <p className="text-[11px] text-white/60">{gensetStatus}</p>}
-                    {gensetResult && gensetResult.results.length > 0 && (
-                      <div className="space-y-1.5">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-white/45">
-                          {gensetResult.results.length} route{gensetResult.results.length !== 1 ? 's' : ''}
-                        </p>
-                        {gensetResult.results.map((r, i) => {
-                          const units = r.road_dist_m / 100
-                          const matCost = Math.round(units * matPer100m)
-                          const engCost = Math.round(units * engPer100m)
-                          const total = matCost + engCost
-                          return (
-                            <button
-                              key={r.osm_id}
-                              onClick={() => mapRef.current?.flyTo({ center: [r.lng, r.lat], zoom: 14, duration: 800 })}
-                              className="flex w-full flex-col rounded-lg bg-white/5 px-2.5 py-2 text-left hover:bg-white/10"
-                            >
-                              <div className="mb-1 flex w-full items-center justify-between">
-                                <span className="text-xs font-semibold text-sky-300">{i === 0 ? '★ ' : ''}{r.name}</span>
-                                <span className="text-xs font-semibold text-accent-400">{r.road_dist_km} km</span>
+                    {gensetSingleSources && (() => {
+                      const allSources = [...gensetSingleSources.substations, ...gensetSingleSources.electric_poles]
+                      return (
+                        <div className="space-y-1.5">
+                          {gensetSingleSources.substations.length > 0 && (
+                            <>
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-400/70">
+                                Substations ({gensetSingleSources.substations_found})
+                              </p>
+                              {gensetSingleSources.substations.map((s, i) => {
+                                const units = s.dist_m / 100
+                                const total = Math.round(units * (matPer100m + engPer100m))
+                                return (
+                                  <button key={s.osm_id + i}
+                                    onClick={() => mapRef.current?.flyTo({ center: [s.lon, s.lat], zoom: 15, duration: 800 })}
+                                    className="flex w-full flex-col rounded-lg bg-amber-400/8 px-2.5 py-2 text-left hover:bg-amber-400/15"
+                                  >
+                                    <div className="mb-0.5 flex w-full items-center justify-between">
+                                      <span className="text-xs font-semibold text-amber-300">{s.name}</span>
+                                      <span className="text-xs font-semibold text-white/70">{s.dist_km} km</span>
+                                    </div>
+                                    <div className="flex gap-3 text-[10px] text-white/40">
+                                      {s.voltage && <span>âš¡ {s.voltage}</span>}
+                                      {s.operator && <span>{s.operator}</span>}
+                                      <span className="ml-auto text-emerald-300">RM {total.toLocaleString()}</span>
+                                    </div>
+                                  </button>
+                                )
+                              })}
+                            </>
+                          )}
+                          {gensetSingleSources.electric_poles.length > 0 && (
+                            <>
+                              <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-sky-400/70">
+                                Electric Poles ({gensetSingleSources.poles_found})
+                              </p>
+                              {gensetSingleSources.electric_poles.map((p, i) => {
+                                const units = p.dist_m / 100
+                                const total = Math.round(units * (matPer100m + engPer100m))
+                                return (
+                                  <button key={p.osm_id + i}
+                                    onClick={() => mapRef.current?.flyTo({ center: [p.lon, p.lat], zoom: 16, duration: 800 })}
+                                    className="flex w-full flex-col rounded-lg bg-sky-400/8 px-2.5 py-2 text-left hover:bg-sky-400/15"
+                                  >
+                                    <div className="mb-0.5 flex w-full items-center justify-between">
+                                      <span className="text-xs font-semibold text-sky-300">{p.name}</span>
+                                      <span className="text-xs font-semibold text-white/70">{p.dist_km} km</span>
+                                    </div>
+                                    <p className="text-[10px] text-white/35">straight-line Â· RM {total.toLocaleString()}</p>
+                                  </button>
+                                )
+                              })}
+                            </>
+                          )}
+                          {allSources.length > 0 && (() => {
+                            const best = [...allSources].sort((a, b) => a.dist_m - b.dist_m)[0]
+                            const units = best.dist_m / 100
+                            const mat = Math.round(units * matPer100m)
+                            const eng = Math.round(units * engPer100m)
+                            return (
+                              <div className="mt-1 rounded-lg border border-white/15 bg-white/5 px-2.5 py-2 text-xs">
+                                <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">Nearest overall</p>
+                                <div className="flex justify-between"><span className="text-white/55">{best.power_source_type}</span><span className="truncate max-w-[130px] text-right text-white/70">{best.name}</span></div>
+                                <div className="flex justify-between"><span className="text-white/55">Distance</span><span>{best.dist_km} km</span></div>
+                                <div className="flex justify-between"><span className="text-white/55">Material</span><span>RM {mat.toLocaleString()}</span></div>
+                                <div className="flex justify-between"><span className="text-white/55">Engineering</span><span>RM {eng.toLocaleString()}</span></div>
+                                <div className="mt-1 flex justify-between border-t border-white/10 pt-1">
+                                  <span className="font-semibold text-white/55">Total</span>
+                                  <span className="font-semibold text-accent-400">RM {(mat + eng).toLocaleString()}</span>
+                                </div>
                               </div>
-                              <div className="grid grid-cols-3 gap-1 text-[10px] text-white/45">
-                                <span>Material <span className="text-white/70">RM {matCost.toLocaleString()}</span></span>
-                                <span>Eng. <span className="text-white/70">RM {engCost.toLocaleString()}</span></span>
-                                <span>Total <span className="font-semibold text-emerald-300">RM {total.toLocaleString()}</span></span>
-                              </div>
-                            </button>
-                          )
-                        })}
-                        {/* Summary card — shortest route */}
-                        {(() => {
-                          const r = gensetResult.results[0]
-                          const units = r.road_dist_m / 100
-                          const mat = Math.round(units * matPer100m)
-                          const eng = Math.round(units * engPer100m)
-                          return (
-                            <div className="rounded-lg border border-accent-400/25 bg-accent-400/8 px-2.5 py-2 text-xs">
-                              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">Shortest route summary</p>
-                              <div className="flex justify-between"><span className="text-white/55">Distance</span><span className="font-semibold">{r.road_dist_km} km</span></div>
-                              <div className="flex justify-between"><span className="text-white/55">Material</span><span>RM {mat.toLocaleString()}</span></div>
-                              <div className="flex justify-between"><span className="text-white/55">Engineering</span><span>RM {eng.toLocaleString()}</span></div>
-                              <div className="mt-1 flex justify-between border-t border-white/10 pt-1"><span className="font-semibold text-white/55">Total</span><span className="font-semibold text-accent-400">RM {(mat + eng).toLocaleString()}</span></div>
-                            </div>
-                          )
-                        })()}
-                      </div>
-                    )}
+                            )
+                          })()}
+                        </div>
+                      )
+                    })()}
                   </div>
                 )}
 
                 {/* Bulk mode */}
                 {gensetTab === 'bulk' && (
-                  <div className="space-y-2">
-                    <p className="text-[10px] text-white/45">Substations from {fixedLayers ? `"${fixedLayers.substations_layer}"` : 'GeoServer'}</p>
+                  <div className="space-y-3">
+                    <p className="text-[10px] leading-relaxed text-white/45">
+                      Upload a spreadsheet with a <span className="font-mono text-white/70">SITE ID</span> column.
+                      The server looks up coordinates from the DB, finds all substations (Overpass)
+                      and electric poles (local dataset) within 2 km, and returns an Excel file
+                      with both — missing sites go to a separate sheet.
+                    </p>
                     <div>
                       <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
-                        Spreadsheet with a site_id column
+                        Spreadsheet (.xlsx / .csv)
                       </label>
                       <input
                         type="file"
@@ -2240,72 +2709,74 @@ export function MapPage() {
                         onChange={(e) => setGensetBulkFile(e.target.files?.[0] ?? null)}
                         className="w-full text-xs text-white/70"
                       />
-                      {gensetBulkFile && <p className="mt-0.5 text-[11px] text-emerald-300">{gensetBulkFile.name}</p>}
-                    </div>
-                    {gensetStatus && <p className="text-[11px] text-white/60">{gensetStatus}</p>}
-                    {gensetBulkResults.length > 0 && (
-                      <div className="max-h-48 overflow-y-auto rounded-xl bg-white/5">
-                        <table className="w-full text-left text-xs">
-                          <thead className="sticky top-0 bg-ink-900/95 text-white/45">
-                            <tr>
-                              <th className="px-2.5 py-1.5">Site</th>
-                              <th className="px-2.5 py-1.5">Nearest sub</th>
-                              <th className="px-2.5 py-1.5">km</th>
-                              <th className="px-2.5 py-1.5">Total RM</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {gensetBulkResults.map((r) => {
-                              const best = r.result?.results[0]
-                              const units = best ? best.road_dist_m / 100 : 0
-                              const total = best ? Math.round(units * (matPer100m + engPer100m)) : 0
-                              return (
-                                <tr key={r.siteId} className="border-t border-white/5">
-                                  <td className="px-2.5 py-1.5 font-semibold">{r.siteId}</td>
-                                  <td className="px-2.5 py-1.5 text-white/70">{best ? best.name : r.error ?? '—'}</td>
-                                  <td className="px-2.5 py-1.5 text-white/70">{best ? best.road_dist_km : '—'}</td>
-                                  <td className="px-2.5 py-1.5 text-emerald-300">{best ? total.toLocaleString() : '—'}</td>
-                                </tr>
-                              )
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                    <div className="flex gap-2">
-                      <button
-                        onClick={runGensetBulk}
-                        className="flex-1 rounded-lg bg-gradient-to-r from-accent-400 to-accent-500 px-3 py-2 text-xs font-semibold text-ink-900"
-                      >
-                        Process file
-                      </button>
-                      {gensetBulkResults.length > 0 && (
-                        <button
-                          onClick={() => {
-                            const rows = ['Site ID,Nearest Substation,Road Distance (km),Material RM,Engineering RM,Total RM,Error']
-                            for (const r of gensetBulkResults) {
-                              const best = r.result?.results[0]
-                              if (best) {
-                                const units = best.road_dist_m / 100
-                                const mat = Math.round(units * matPer100m)
-                                const eng = Math.round(units * engPer100m)
-                                rows.push(`${r.siteId},"${best.name}",${best.road_dist_km},${mat},${eng},${mat + eng},`)
-                              } else {
-                                rows.push(`${r.siteId},,,,,${r.error ?? ''}`)
-                              }
-                            }
-                            const blob = new Blob([rows.join('\n')], { type: 'text/csv' })
-                            const a = document.createElement('a')
-                            a.href = URL.createObjectURL(blob)
-                            a.download = 'genset_routes.csv'
-                            a.click()
-                          }}
-                          className="rounded-lg border border-emerald-400/40 bg-emerald-400/10 px-3 py-2 text-xs font-semibold text-emerald-300"
-                        >
-                          Export CSV
-                        </button>
+                      {gensetBulkFile && (
+                        <p className="mt-0.5 text-[11px] text-emerald-300">{gensetBulkFile.name}</p>
                       )}
                     </div>
+                    {gensetStatus && (
+                      <p className="text-[11px] text-white/60">{gensetStatus}</p>
+                    )}
+                    <button
+                      disabled={!gensetBulkFile || gensetLoading}
+                      onClick={async () => {
+                        if (!gensetBulkFile) return
+                        setGensetLoading(true)
+                        setGensetBulkProgress([])
+                        setGensetBulkTotal(0)
+                        setGensetStatus('Starting export...')
+                        try {
+                          await api.gensetBulkExport(gensetBulkFile, (evt) => {
+                            if (evt.type === 'start') {
+                              setGensetBulkTotal(evt.total ?? 0)
+                              setGensetStatus(`Processing 0 / ${evt.total} sites...`)
+                            } else if (evt.type === 'progress') {
+                              setGensetBulkProgress(prev => [...prev, {
+                                siteId: evt.site_id ?? '',
+                                region: evt.region ?? '',
+                                status: evt.status ?? '',
+                                sources: evt.sources ?? 0,
+                              }])
+                              setGensetStatus(`Processing ${evt.i} / ${evt.total} sites...`)
+                            } else if (evt.type === 'done') {
+                              setGensetStatus(`Done — ${evt.ok} sites routed, ${evt.missing} missing. Excel downloaded.`)
+                            } else if (evt.type === 'error') {
+                              setGensetStatus(`Error: ${evt.detail}`)
+                            }
+                          })
+                        } catch (err: unknown) {
+                          setGensetStatus(`Error: ${err instanceof Error ? err.message : String(err)}`)
+                        } finally {
+                          setGensetLoading(false)
+                        }
+                      }}
+                      className="w-full rounded-lg bg-gradient-to-r from-accent-400 to-accent-500 px-3 py-2 text-xs font-semibold text-ink-900 disabled:opacity-40"
+                    >
+                      {gensetLoading
+                        ? `Processing ${gensetBulkProgress.length}${gensetBulkTotal ? ` / ${gensetBulkTotal}` : ''}...`
+                        : 'Export Excel (substations + poles)'}
+                    </button>
+                    {gensetBulkProgress.length > 0 && (
+                      <div className="max-h-48 overflow-y-auto rounded-lg border border-white/10 bg-black/30">
+                        <div className="sticky top-0 flex justify-between border-b border-white/10 bg-black/60 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-white/40">
+                          <span>Site</span>
+                          <span>Status</span>
+                        </div>
+                        {[...gensetBulkProgress].reverse().map((p, idx) => (
+                          <div key={idx} className="flex items-center justify-between gap-2 px-2 py-1 text-[11px] odd:bg-white/[0.02]">
+                            <span className="font-mono text-white/80">{p.siteId}</span>
+                            <span className={
+                              p.status === 'found' ? 'text-emerald-400' :
+                              p.status === 'missing' ? 'text-red-400' :
+                              p.status === 'no_sources' ? 'text-amber-400' : 'text-white/40'
+                            }>
+                              {p.status === 'found' ? `${p.sources} source${p.sources !== 1 ? 's' : ''}` :
+                               p.status === 'missing' ? 'not in DB' :
+                               p.status === 'no_sources' ? 'no sources' : p.status}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -2353,7 +2824,7 @@ export function MapPage() {
                       <thead className="bg-white/5 text-[10px] text-white/45">
                         <tr>
                           <th className="px-2 py-1.5">Type</th>
-                          <th className="px-2 py-1.5">HFoV°</th>
+                          <th className="px-2 py-1.5">HFoVÂ°</th>
                           <th className="px-2 py-1.5">Range m</th>
                           <th className="px-2 py-1.5">RM</th>
                           <th className="px-2 py-1.5" />
@@ -2380,7 +2851,7 @@ export function MapPage() {
                             </td>
                             <td className="px-1.5 py-1">
                               {cctvCameras.length > 1 && (
-                                <button onClick={() => setCctvCameras((prev) => prev.filter((_, j) => j !== i))} className="text-white/30 hover:text-red-400">×</button>
+                                <button onClick={() => setCctvCameras((prev) => prev.filter((_, j) => j !== i))} className="text-white/30 hover:text-red-400">Ã—</button>
                               )}
                             </td>
                           </tr>
@@ -2409,7 +2880,7 @@ export function MapPage() {
                       {cctvResult.camera_cost_summary.features.map((f, i) => (
                         <li key={i} className="rounded-lg bg-white/5 px-2.5 py-1.5">
                           <span className="font-semibold">{String(f.properties?.camera_type)}</span>
-                          <span className="text-white/55"> — {String(f.properties?.count)}× — {fmtCurrency(Number(f.properties?.total_cost_rm))}</span>
+                          <span className="text-white/55"> — {String(f.properties?.count)}Ã— — {fmtCurrency(Number(f.properties?.total_cost_rm))}</span>
                         </li>
                       ))}
                     </ul>
@@ -2506,7 +2977,7 @@ export function MapPage() {
                                 <span className="flex-1 font-semibold" style={{ color: col }}>{s.site_id}</span>
                                 <span className="text-white/45">{s.lat.toFixed(4)}, {s.lng.toFixed(4)}</span>
                                 <button onClick={() => setBtcSites((prev) => prev.filter((_, j) => j !== i))}
-                                  className="ml-1 text-white/30 hover:text-red-400">✕</button>
+                                  className="ml-1 text-white/30 hover:text-red-400">âœ•</button>
                               </>
                             ) : (
                               <span className="flex-1 italic text-white/35">Site {i + 1}</span>
@@ -2562,9 +3033,219 @@ export function MapPage() {
                 </div>
               )
             })()}
+
+            {/* ── COVERAGE SIMULATION ── */}
+            {toolDrawer === 'coverage' && (
+              <div className="space-y-4">
+                <p className="text-[11px] text-white/50 leading-relaxed">
+                  Simulates RF coverage for all sites in the viewport. Choose a propagation
+                  model below — 3GPP TR 38.901 UMa/RMa are recommended for LTE/5G networks.
+                  Monte Carlo adds log-normal shadow fading for coverage probability maps.
+                </p>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
+                      Frequency (MHz)
+                    </label>
+                    <select
+                      value={coverageFreq}
+                      onChange={(e) => setCoverageFreq(Number(e.target.value))}
+                      className="w-full rounded-lg border border-white/15 bg-[#1e1b2e] px-2.5 py-1.5 text-xs text-white focus:border-violet-400/60 focus:outline-none [&>option]:bg-[#1e1b2e] [&>option]:text-white"
+                    >
+                      <option value={700}>700 MHz (LTE Band 28)</option>
+                      <option value={850}>850 MHz (UMTS / LTE)</option>
+                      <option value={1800}>1800 MHz (LTE Band 3)</option>
+                      <option value={2100}>2100 MHz (UMTS / LTE)</option>
+                      <option value={2600}>2600 MHz (LTE Band 7)</option>
+                      <option value={3500}>3500 MHz (5G NR)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
+                      Resolution (m/cell)
+                    </label>
+                    <select
+                      value={coverageRes}
+                      onChange={(e) => setCoverageRes(Number(e.target.value))}
+                      className="w-full rounded-lg border border-white/15 bg-[#1e1b2e] px-2.5 py-1.5 text-xs text-white focus:border-violet-400/60 focus:outline-none [&>option]:bg-[#1e1b2e] [&>option]:text-white"
+                    >
+                      <option value={25}>25 m — detailed (slow)</option>
+                      <option value={50}>50 m — balanced</option>
+                      <option value={100}>100 m — fast</option>
+                      <option value={200}>200 m — very fast</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
+                      TX power (dBm)
+                    </label>
+                    <input
+                      type="number"
+                      value={coverageTxPower}
+                      min={10}
+                      max={60}
+                      onChange={(e) => setCoverageTxPower(Number(e.target.value))}
+                      className="w-full rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs focus:border-violet-400/60 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-white/45">
+                      Propagation Model
+                    </label>
+                    <select
+                      value={coverageModel}
+                      onChange={(e) => setCoverageModel(e.target.value)}
+                      className="w-full rounded-lg border border-white/15 bg-[#1e1b2e] px-2.5 py-1.5 text-xs text-white focus:border-violet-400/60 focus:outline-none [&>option]:bg-[#1e1b2e] [&>option]:text-white"
+                    >
+                      <option value="hata">COST-231 Hata (urban, 150–2000 MHz)</option>
+                      <option value="tr38901_uma">3GPP TR 38.901 UMa (LTE/5G urban)</option>
+                      <option value="tr38901_rma">3GPP TR 38.901 RMa (LTE/5G rural)</option>
+                      <option value="spm">SPM / Atoll empirical</option>
+                      <option value="freespace">Free Space + Two-Ray</option>
+                      <option value="sionna">Sionna RT (GPU ray tracing)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="flex cursor-pointer items-center gap-2.5">
+                    <input
+                      type="checkbox"
+                      checked={coverageIncludeBuildings}
+                      onChange={(e) => setCoverageIncludeBuildings(e.target.checked)}
+                      className="h-3.5 w-3.5 accent-violet-400"
+                    />
+                    <span className="text-xs text-white/70">Include buildings (OpenStreetMap)</span>
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2.5">
+                    <input
+                      type="checkbox"
+                      checked={coverageMonteCarlo}
+                      onChange={(e) => setCoverageMonteCarlo(e.target.checked)}
+                      className="h-3.5 w-3.5 accent-violet-400"
+                    />
+                    <span className="text-xs text-white/70">Monte Carlo shadowing (Ïƒ = 8 dB, 50 samples)</span>
+                  </label>
+                </div>
+                {coverageIncludeBuildings && (
+                  <p className="text-[10px] text-white/40 leading-relaxed -mt-1">
+                    Fetches building footprints for the viewport and applies a 20 dB NLOS
+                    penalty on blocked paths. Adds a few seconds for the Overpass query.
+                  </p>
+                )}
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={runCoverage}
+                    disabled={coverageLoading}
+                    className="flex-1 rounded-xl bg-gradient-to-r from-violet-500 to-accent-500 py-2.5 text-xs font-semibold text-white disabled:opacity-50"
+                  >
+                    {coverageLoading ? 'Simulating…' : 'Simulate coverage'}
+                  </button>
+                  <button
+                    onClick={clearCoverage}
+                    title="Clear heatmap"
+                    className="rounded-xl border border-white/20 px-3 text-xs text-white/60 hover:text-white"
+                  >
+                    Clear
+                  </button>
+                </div>
+
+                {coverageStatus && (
+                  <p className="text-[11px] text-white/60">{coverageStatus}</p>
+                )}
+
+                {/* View mode toggle */}
+                <div className="grid grid-cols-2 gap-1">
+                  {([
+                    ['rsrp',         'RSRP'],
+                    ['sinr',         'SINR'],
+                    ['delay_spread', 'Delay Spread'],
+                    ['site',         'Per site'],
+                  ] as const).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      onClick={() => setCoverageViewMode(mode)}
+                      className={`py-1.5 rounded-lg text-[11px] font-medium transition-colors border ${coverageViewMode === mode ? 'bg-violet-500/60 border-violet-400/40 text-white' : 'bg-white/5 border-white/10 text-white/45 hover:text-white/70'}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Legend */}
+                {coverageViewMode === 'rsrp' && (
+                  <div>
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">RSRP  (âˆ’140 â†’ âˆ’70 dBm)</p>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] text-purple-400">Weak</span>
+                      <div className="flex-1 h-2 rounded-full" style={{ background: 'linear-gradient(90deg,#0d0221,#6b01a8,#c3297d,#f5741d,#f8e020)' }} />
+                      <span className="text-[10px] text-yellow-300">Strong</span>
+                    </div>
+                  </div>
+                )}
+                {coverageViewMode === 'sinr' && (
+                  <div>
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">SINR  (âˆ’10 â†’ 30 dB)</p>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] text-red-400">Poor</span>
+                      <div className="flex-1 h-2 rounded-full" style={{ background: 'linear-gradient(90deg,#d73027,#f46d43,#fdae61,#ffffbf,#a6d96a,#1a9850)' }} />
+                      <span className="text-[10px] text-green-400">Good</span>
+                    </div>
+                    <p className="mt-1 text-[9px] text-white/30">High SINR = dominant cell, low = interference-limited</p>
+                  </div>
+                )}
+                {coverageViewMode === 'delay_spread' && (
+                  <div>
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/45">RMS Delay Spread  (0 â†’ 500 ns)</p>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] text-yellow-200">Low</span>
+                      <div className="flex-1 h-2 rounded-full" style={{ background: 'linear-gradient(90deg,#ffffcc,#fed976,#fd8d3c,#e31a1c,#800026)' }} />
+                      <span className="text-[10px] text-red-900" style={{color:'#800026'}}>High</span>
+                    </div>
+                    <p className="mt-1 text-[9px] text-white/30">High delay spread â†’ multipath — impacts OFDM subcarrier spacing</p>
+                  </div>
+                )}
+                {coverageViewMode === 'site' && (
+                  <div>
+                    <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/45">Sites ({coverageSiteColors.size})</p>
+                    {coverageSiteColors.size === 0 ? (
+                      <p className="text-[10px] text-white/30">Run simulation to see per-site colours</p>
+                    ) : (
+                      <div className="max-h-32 overflow-y-auto space-y-1 pr-1">
+                        {[...coverageSiteColors.entries()].map(([id, color]) => (
+                          <div key={id} className="flex items-center gap-1.5">
+                            <div className="h-2.5 w-2.5 flex-shrink-0 rounded-sm" style={{ background: color }} />
+                            <span className="truncate text-[10px] text-white/55">{id}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {coverageEngine && (
+                  <div className={`rounded-lg border px-3 py-2 text-[10px] ${coverageEngine.startsWith('sionna') ? 'border-violet-400/30 bg-violet-400/10 text-violet-300' : 'border-white/15 bg-white/5 text-white/45'}`}>
+                    {coverageEngine.startsWith('sionna') ? 'âš¡ ' : 'ðŸ“ '}
+                    Engine: <span className="font-mono">{coverageEngine}</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </GlassPanel>
+      </div>
       )}
+
+      {/* ── Indoor simulation full-screen editor ──────────────────────── */}
+      {toolDrawer === 'indoor' && (
+        <IndoorSimulator onClose={() => setToolDrawer('none')} />
+      )}
+
 
     {forecastModal && (
       <ForecastModal
