@@ -1,5 +1,35 @@
 # 3W+ Platform
 
+> **Note for Wendy** — file locations for the two modules below.
+>
+> **RAN Forecast**
+>
+> | Role | File |
+> |---|---|
+> | API endpoints (congestion, forecast, CAPEX, PRB) | `backend/app/analytics/router.py` |
+> | Cell / hardware reference ETL | `backend/app/ingestion/stages/cell_reference.py` |
+> | xC Huawei raw data ingest | `backend/app/ingestion/stages/xc_huawei.py` |
+> | xD ZTE raw data ingest | `backend/app/ingestion/stages/xd_zte.py` |
+> | Site coordinates ETL | `backend/app/ingestion/stages/site_coordinates.py` |
+> | Site coverage parameters ETL | `backend/app/ingestion/stages/site_coverage_params.py` |
+> | Congestion analysis ETL | `backend/app/ingestion/stages/congestion_analysis.py` |
+> | Forecast results ETL | `backend/app/ingestion/stages/forecast_results.py` |
+> | Pre-CAPEX upgrades ETL | `backend/app/ingestion/stages/pre_capex_upgrades.py` |
+> | CAPEX upgrades ETL | `backend/app/ingestion/stages/capex_upgrades.py` |
+> | CD combined result ETL | `backend/app/ingestion/stages/cd_combined_result.py` |
+> | Coverage holes ETL | `backend/app/ingestion/stages/coverage_holes.py` |
+> | Frontend dashboard (PRB cards, viewport stats) | `frontend/src/pages/Map.tsx` |
+>
+> **Genset (Power Source Road Routing)**
+>
+> | Role | File |
+> |---|---|
+> | Core routing logic (OSMnx road graph, substations, poles) | `backend/app/siteplanning/genset.py` |
+> | Electric pole GeoPackage lookup | `backend/app/siteplanning/electric_poles.py` |
+> | API endpoints (single, bulk-export, bulk-site-ids) | `backend/app/siteplanning/router.py` |
+> | Request / response schemas | `backend/app/siteplanning/schemas.py` |
+> | Offline QGIS processing model | `qgis_models/genset_road_routing.model3` |
+
 RAN congestion analytics, AI-assisted network planning, and GIS-based site planning for CelcomDigi. Consolidates PRB/throughput forecasting, road-routing for power-source siting, CCTV planning, kanban project tracking, and an AI chat agent into one web application.
 
 ## Stack
